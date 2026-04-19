@@ -26,6 +26,7 @@ export interface SceneInitOptions {
   height?: number;
   backgroundColor?: ColorSource;
   antialias?: boolean;
+  softwareBackground?: boolean;
 }
 
 export class Scene {
@@ -38,8 +39,10 @@ export class Scene {
   private logoSprite: Sprite;
   private textSprite: Text;
   private frameTexture: Texture | null = null;
+  private bgFrameTexture: Texture | null = null;
   private logoTexture: Texture | null = null;
   private initialized = false;
+  private softwareBackground = false;
   private width: number;
   private height: number;
 
@@ -62,6 +65,10 @@ export class Scene {
   async init(options: SceneInitOptions): Promise<void> {
     this.width = options.width ?? OUTPUT_WIDTH;
     this.height = options.height ?? OUTPUT_HEIGHT;
+    this.softwareBackground = options.softwareBackground ?? false;
+    if (this.softwareBackground) {
+      this.bgSprite.filters = [];
+    }
     await this.app.init({
       canvas: options.canvas as HTMLCanvasElement,
       width: this.width,
@@ -87,22 +94,40 @@ export class Scene {
       this.frameTexture = null;
     }
     if (!source) {
-      this.bgSprite.visible = false;
       this.videoSprite.visible = false;
+      if (!this.softwareBackground) this.bgSprite.visible = false;
       return;
     }
     this.frameTexture = Texture.from(source, true);
-    this.bgSprite.texture = this.frameTexture;
     this.videoSprite.texture = this.frameTexture;
-    this.bgSprite.visible = true;
     this.videoSprite.visible = true;
-    this.layoutBackground();
+    if (!this.softwareBackground) {
+      this.bgSprite.texture = this.frameTexture;
+      this.bgSprite.visible = true;
+      this.layoutBackground(this.frameTexture);
+    }
     this.layoutMainVideo(this._lastMainVideo);
+  }
+
+  setBackgroundFrame(source: FrameSource | null): void {
+    if (this.bgFrameTexture) {
+      this.bgFrameTexture.destroy(true);
+      this.bgFrameTexture = null;
+    }
+    if (!source) {
+      this.bgSprite.visible = false;
+      return;
+    }
+    this.bgFrameTexture = Texture.from(source, true);
+    this.bgSprite.texture = this.bgFrameTexture;
+    this.bgSprite.visible = true;
+    this.layoutBackground(this.bgFrameTexture);
   }
 
   private _lastMainVideo: MainVideoSettings = { widthPercent: 100, offsetY: 0 };
 
   setBackground(settings: BackgroundSettings): void {
+    if (this.softwareBackground) return;
     this.bgBlur.strength = Math.max(0, settings.blurPx);
     this.bgColor.reset();
     this.bgColor.brightness(settings.brightness, false);
@@ -171,9 +196,13 @@ export class Scene {
       if (this.frameTexture) this.frameTexture.destroy(true);
     } catch (err) { console.warn('[scene:destroy frameTexture]', err); }
     try {
+      if (this.bgFrameTexture) this.bgFrameTexture.destroy(true);
+    } catch (err) { console.warn('[scene:destroy bgFrameTexture]', err); }
+    try {
       if (this.logoTexture) this.logoTexture.destroy(true);
     } catch (err) { console.warn('[scene:destroy logoTexture]', err); }
     this.frameTexture = null;
+    this.bgFrameTexture = null;
     this.logoTexture = null;
     if (this.initialized) {
       try {
@@ -185,10 +214,9 @@ export class Scene {
     this.initialized = false;
   }
 
-  private layoutBackground(): void {
-    if (!this.frameTexture) return;
-    const tw = this.frameTexture.width;
-    const th = this.frameTexture.height;
+  private layoutBackground(texture: Texture): void {
+    const tw = texture.width;
+    const th = texture.height;
     const scale = Math.max(this.width / tw, this.height / th);
     this.bgSprite.anchor.set(0.5);
     this.bgSprite.position.set(this.width / 2, this.height / 2);

@@ -61,6 +61,28 @@ export async function extractThumbnail(
   }
 }
 
+function drawBlurredBackground(
+  ctx: OffscreenCanvasRenderingContext2D,
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  filter: string,
+): void {
+  const sw = (source as HTMLCanvasElement | OffscreenCanvas).width;
+  const sh = (source as HTMLCanvasElement | OffscreenCanvas).height;
+  const scale = Math.max(width / sw, height / sh);
+  const dw = sw * scale;
+  const dh = sh * scale;
+  const dx = (width - dw) / 2;
+  const dy = (height - dh) / 2;
+  ctx.save();
+  ctx.filter = 'none';
+  ctx.clearRect(0, 0, width, height);
+  ctx.filter = filter;
+  ctx.drawImage(source, dx, dy, dw, dh);
+  ctx.restore();
+}
+
 async function canvasToBlob(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   type: string,
@@ -104,7 +126,14 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       width: OUTPUT_WIDTH,
       height: OUTPUT_HEIGHT,
       antialias: false,
+      softwareBackground: true,
     });
+
+    const bgCanvas = new OffscreenCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+    const bgCtx = bgCanvas.getContext('2d');
+    if (!bgCtx) throw new Error('2D контекст для фона недоступен');
+    const bg = opts.settings.background;
+    const bgFilter = `blur(${Math.max(0, bg.blurPx)}px) brightness(${bg.brightness}) saturate(${bg.saturation})`;
 
     scene.setBackground(opts.settings.background);
     scene.setMainVideo(opts.settings.mainVideo);
@@ -146,6 +175,8 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       for await (const wrapped of videoSink.canvases(0, duration)) {
         if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
         const ts = Math.max(0, wrapped.timestamp);
+        drawBlurredBackground(bgCtx, wrapped.canvas, OUTPUT_WIDTH, OUTPUT_HEIGHT, bgFilter);
+        scene.setBackgroundFrame(bgCanvas);
         scene.setFrame(wrapped.canvas);
         scene.render();
         await videoSource.add(ts, wrapped.duration);
