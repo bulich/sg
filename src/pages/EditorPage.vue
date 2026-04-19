@@ -123,7 +123,14 @@ async function onReplaceFile(event: Event) {
           class="canvas"
         />
         <MoveableOverlay :canvas="canvasRef" />
-        <div v-if="preview.loading.value && !preview.bitmap.value" class="overlay">
+        <div v-if="!store.videoBlob" class="overlay empty-state">
+          <p>Видео не загружено</p>
+          <button type="button" class="load-btn" :disabled="replacing" @click="pickReplacement">
+            <span v-if="replacing" class="spinner-sm" aria-hidden="true"></span>
+            <span v-else>Загрузить видео</span>
+          </button>
+        </div>
+        <div v-else-if="preview.loading.value && !preview.bitmap.value" class="overlay">
           <span class="spinner" aria-hidden="true"></span>
         </div>
       </div>
@@ -246,6 +253,24 @@ async function onReplaceFile(event: Event) {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.35);
+}
+.empty-state {
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.load-btn {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+.load-btn[disabled] {
+  opacity: 0.6;
+  pointer-events: none;
 }
 .spinner {
   width: 28px;

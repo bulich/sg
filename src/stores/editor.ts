@@ -15,12 +15,14 @@ import {
   saveLogo,
   setProjectSettings,
 } from '@/storage/repositories';
+import { useProjectsStore } from '@/stores/projects';
 
 function cloneSettings(settings: EditorSettings): EditorSettings {
   return JSON.parse(JSON.stringify(settings)) as EditorSettings;
 }
 
 export const useEditorStore = defineStore('editor', () => {
+  const projectsStore = useProjectsStore();
   const project = ref<Project | null>(null);
   const settings = ref<EditorSettings>(cloneSettings(DEFAULT_SETTINGS));
   const logoBlob = ref<Blob | null>(null);
@@ -28,9 +30,14 @@ export const useEditorStore = defineStore('editor', () => {
   const dirty = ref(false);
   const saving = ref(false);
 
-  const videoBlob = computed(() => project.value?.videoBlob ?? null);
-  const videoMeta = computed(() => project.value?.videoMeta ?? null);
-  const duration = computed(() => project.value?.videoMeta?.durationSec ?? 0);
+  const sessionVideo = computed(() => {
+    void projectsStore.cacheVersion;
+    const id = project.value?.id;
+    return id ? projectsStore.getSessionVideo(id) : null;
+  });
+  const videoBlob = computed(() => sessionVideo.value?.blob ?? null);
+  const videoMeta = computed(() => sessionVideo.value?.meta ?? null);
+  const duration = computed(() => sessionVideo.value?.meta.durationSec ?? 0);
 
   let saveTimer: number | null = null;
 
@@ -44,7 +51,8 @@ export const useEditorStore = defineStore('editor', () => {
       const asset = await getLogo(loaded.settings.logo.assetId);
       if (asset) logoBlob.value = asset.blob;
     }
-    previewTimeSec.value = Math.min(0.5, Math.max(0, (loaded.videoMeta?.durationSec ?? 1) / 2));
+    const cached = projectsStore.getSessionVideo(loaded.id);
+    previewTimeSec.value = Math.min(0.5, Math.max(0, (cached?.meta.durationSec ?? 1) / 2));
     dirty.value = false;
     return true;
   }

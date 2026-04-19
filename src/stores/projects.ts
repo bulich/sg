@@ -1,20 +1,28 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Project } from '@/types/editor';
+import type { Project, VideoMeta } from '@/types/editor';
 import {
   createProject,
   deleteProject,
-  getProject,
   listProjects,
   renameProject,
-  setProjectVideo,
+  touchProject,
 } from '@/storage/repositories';
 import { extractThumbnail, readInputMeta } from '@/video/pipeline';
 import { validateInputMeta } from '@/video/validation';
 
+interface SessionVideo {
+  blob: Blob;
+  meta: VideoMeta;
+  thumbnail: Blob;
+}
+
+const videoCache = new Map<string, SessionVideo>();
+
 export const useProjectsStore = defineStore('projects', () => {
   const projects = ref<Project[]>([]);
   const loading = ref(false);
+  const cacheVersion = ref(0);
 
   async function loadAll() {
     loading.value = true;
@@ -33,6 +41,8 @@ export const useProjectsStore = defineStore('projects', () => {
 
   async function remove(id: string) {
     await deleteProject(id);
+    videoCache.delete(id);
+    cacheVersion.value++;
     projects.value = projects.value.filter((p) => p.id !== id);
   }
 
@@ -58,9 +68,16 @@ export const useProjectsStore = defineStore('projects', () => {
     const meta = await readInputMeta(blob);
     validateInputMeta(meta);
     const thumbnail = await extractThumbnail(blob);
-    await setProjectVideo(projectId, blob, meta, thumbnail);
-    const updated = await getProject(projectId);
-    if (updated) replace(updated);
+    videoCache.set(projectId, { blob, meta, thumbnail });
+    cacheVersion.value++;
+    await touchProject(projectId);
+    const idx = projects.value.findIndex((p) => p.id === projectId);
+    if (idx !== -1) {
+      const existing = projects.value[idx];
+      if (existing) {
+        projects.value[idx] = { ...existing, updatedAt: Date.now() };
+      }
+    }
   }
 
   async function toStorableBlob(source: Blob): Promise<Blob> {
@@ -68,5 +85,25 @@ export const useProjectsStore = defineStore('projects', () => {
     return new Blob([buffer], { type: source.type || 'video/mp4' });
   }
 
-  return { projects, loading, loadAll, create, remove, rename, replace, importVideo };
+  function getSessionVideo(projectId: string): SessionVideo | null {
+    return videoCache.get(projectId) ?? null;
+  }
+
+  function clearSessionVideo(projectId: string) {
+    if (videoCache.delete(projectId)) cacheVersion.value++;
+  }
+
+  return {
+    projects,
+    loading,
+    cacheVersion,
+    loadAll,
+    create,
+    remove,
+    rename,
+    replace,
+    importVideo,
+    getSessionVideo,
+    clearSessionVideo,
+  };
 });

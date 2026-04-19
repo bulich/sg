@@ -61,34 +61,56 @@ export async function extractThumbnail(
   }
 }
 
-function drawBlurredBackground(
-  ctx: OffscreenCanvasRenderingContext2D,
-  smallCtx: OffscreenCanvasRenderingContext2D,
-  smallCanvas: OffscreenCanvas,
-  source: CanvasImageSource,
-  width: number,
-  height: number,
-  brightness: number,
-  saturation: number,
-): void {
-  const sw = (source as HTMLCanvasElement | OffscreenCanvas).width;
-  const sh = (source as HTMLCanvasElement | OffscreenCanvas).height;
-  const smallW = smallCanvas.width;
-  const smallH = smallCanvas.height;
-  const smallScale = Math.max(smallW / sw, smallH / sh);
-  const sdw = sw * smallScale;
-  const sdh = sh * smallScale;
-  smallCtx.imageSmoothingEnabled = true;
-  smallCtx.imageSmoothingQuality = 'high';
-  smallCtx.clearRect(0, 0, smallW, smallH);
-  smallCtx.drawImage(source, (smallW - sdw) / 2, (smallH - sdh) / 2, sdw, sdh);
+async function buildStaticBackground(
+  videoTrack: NonNullable<Awaited<ReturnType<Input['getPrimaryVideoTrack']>>>,
+  timeSec: number,
+  bg: { blurPx: number; brightness: number; saturation: number },
+): Promise<OffscreenCanvas> {
+  const sampleW = Math.min(960, videoTrack.displayWidth);
+  const sampleH = Math.max(
+    1,
+    Math.round(sampleW * (videoTrack.displayHeight / videoTrack.displayWidth)),
+  );
+  const sink = new CanvasSink(videoTrack, {
+    width: sampleW,
+    height: sampleH,
+    fit: 'contain',
+    poolSize: 1,
+  });
+  const t = Math.max(0, timeSec);
+  const wrapped = await sink.getCanvas(t);
+  if (!wrapped) throw new Error('Не удалось извлечь кадр для фона');
+
+  const out = new OffscreenCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  const ctx = out.getContext('2d');
+  if (!ctx) throw new Error('2D контекст для фона недоступен');
+
+  const sw = (wrapped.canvas as OffscreenCanvas).width;
+  const sh = (wrapped.canvas as OffscreenCanvas).height;
+  const scale = Math.max(OUTPUT_WIDTH / sw, OUTPUT_HEIGHT / sh);
+  const dw = sw * scale;
+  const dh = sh * scale;
+  const dx = (OUTPUT_WIDTH - dw) / 2;
+  const dy = (OUTPUT_HEIGHT - dh) / 2;
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.clearRect(0, 0, width, height);
-  ctx.drawImage(smallCanvas, 0, 0, width, height);
+  ctx.clearRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-  applyBrightnessSaturation(ctx, width, height, brightness, saturation);
+  const blurStrength = Math.max(0, bg.blurPx);
+  const supportsFilter = 'filter' in ctx;
+  if (blurStrength > 0 && supportsFilter) {
+    const filterCtx = ctx as unknown as { filter: string };
+    filterCtx.filter = `blur(${blurStrength}px)`;
+    const pad = Math.ceil(blurStrength * 2);
+    ctx.drawImage(wrapped.canvas, dx - pad, dy - pad, dw + pad * 2, dh + pad * 2);
+    filterCtx.filter = 'none';
+  } else {
+    ctx.drawImage(wrapped.canvas, dx, dy, dw, dh);
+  }
+
+  applyBrightnessSaturation(ctx, OUTPUT_WIDTH, OUTPUT_HEIGHT, bg.brightness, bg.saturation);
+  return out;
 }
 
 function applyBrightnessSaturation(
@@ -147,9 +169,11 @@ export interface RenderOptions {
   input: Blob;
   settings: EditorSettings;
   logoBlob: Blob | null;
+  backgroundTimeSec: number;
   onProgress?: (p: RenderProgress) => void;
   signal?: AbortSignal;
 }
+
 
 export async function renderVideo(opts: RenderOptions): Promise<Blob> {
   console.log('[pipeline:renderVideo] start', {
@@ -171,16 +195,7 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       softwareBackground: true,
     });
 
-    const bgCanvas = new OffscreenCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-    const bgCtx = bgCanvas.getContext('2d');
-    if (!bgCtx) throw new Error('2D контекст для фона недоступен');
     const bg = opts.settings.background;
-    const blurDownscale = Math.max(1, Math.round(24 + Math.max(0, bg.blurPx)));
-    const blurW = Math.max(8, Math.round(OUTPUT_WIDTH / blurDownscale));
-    const blurH = Math.max(8, Math.round(OUTPUT_HEIGHT / blurDownscale));
-    const bgSmall = new OffscreenCanvas(blurW, blurH);
-    const bgSmallCtx = bgSmall.getContext('2d');
-    if (!bgSmallCtx) throw new Error('2D контекст для фона недоступен');
 
     scene.setBackground(opts.settings.background);
     scene.setMainVideo(opts.settings.mainVideo);
@@ -191,6 +206,9 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
     console.log('[pipeline] getPrimaryVideoTrack');
     const videoTrack = await input.getPrimaryVideoTrack();
     if (!videoTrack) throw new Error('Видео-дорожка не найдена');
+
+    const bgCanvas = await buildStaticBackground(videoTrack, opts.backgroundTimeSec, bg);
+    scene.setBackgroundFrame(bgCanvas);
     console.log('[pipeline] track', { w: videoTrack.displayWidth, h: videoTrack.displayHeight, codec: videoTrack.codec });
     const audioTrack = await input.getPrimaryAudioTrack();
     const duration = await input.computeDuration();
@@ -232,8 +250,6 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
           console.log('[pipeline] first video frame', { ts: wrapped.timestamp, w: (wrapped.canvas as OffscreenCanvas).width, h: (wrapped.canvas as OffscreenCanvas).height });
           firstFrameLogged = true;
         }
-        drawBlurredBackground(bgCtx, bgSmallCtx, bgSmall, wrapped.canvas, OUTPUT_WIDTH, OUTPUT_HEIGHT, bg.brightness, bg.saturation);
-        scene.setBackgroundFrame(bgCanvas);
         scene.setFrame(wrapped.canvas);
         scene.render();
         await videoSource.add(ts, wrapped.duration);

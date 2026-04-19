@@ -12,6 +12,7 @@ export type WorkerRequest =
       input: Blob;
       settings: EditorSettings;
       logoBlob: Blob | null;
+      backgroundTimeSec: number;
     }
   | { type: 'abort'; id: string };
 
@@ -86,6 +87,7 @@ ctx.addEventListener('message', (ev: MessageEvent<WorkerRequest>) => {
       input: msg.input,
       settings: msg.settings,
       logoBlob: msg.logoBlob,
+      backgroundTimeSec: msg.backgroundTimeSec,
       signal: ctrl.signal,
       onProgress: (p) => {
         ctx.postMessage({

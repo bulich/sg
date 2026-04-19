@@ -4,15 +4,20 @@ import { useRouter } from 'vue-router';
 import { getProject, getLogo } from '@/storage/repositories';
 import { renderVideoInWorker } from '@/video/workerClient';
 import type { Project } from '@/types/editor';
+import { useProjectsStore } from '@/stores/projects';
+import { useEditorStore } from '@/stores/editor';
 import { toast } from '@/composables/useToast';
 
 type Phase = 'loading' | 'ready' | 'rendering' | 'done' | 'error' | 'canceled';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
+const projectsStore = useProjectsStore();
+const editorStore = useEditorStore();
 
 const phase = ref<Phase>('loading');
 const project = ref<Project | null>(null);
+const videoBlob = ref<Blob | null>(null);
 const logoBlob = ref<Blob | null>(null);
 const errorMessage = ref<string>('');
 
@@ -72,17 +77,19 @@ onMounted(async () => {
     errorMessage.value = 'Проект не найден';
     return;
   }
-  if (!loaded.videoBlob) {
+  const cached = projectsStore.getSessionVideo(loaded.id);
+  if (!cached) {
     phase.value = 'error';
-    errorMessage.value = 'Нет исходного видео';
+    errorMessage.value = 'Загрузите видео в редакторе';
     return;
   }
   project.value = loaded;
+  videoBlob.value = cached.blob;
   if (loaded.settings.logo.assetId) {
     const asset = await getLogo(loaded.settings.logo.assetId);
     if (asset) logoBlob.value = asset.blob;
   }
-  durationSec.value = loaded.videoMeta?.durationSec ?? 0;
+  durationSec.value = cached.meta.durationSec;
   phase.value = 'ready';
 });
 
@@ -92,14 +99,7 @@ onBeforeUnmount(() => {
 });
 
 async function startRender() {
-  console.log('[exportPage:startRender] click', {
-    hasProject: !!project.value,
-    hasVideo: !!project.value?.videoBlob,
-    videoSize: project.value?.videoBlob?.size,
-    hasLogo: !!logoBlob.value,
-    logoSize: logoBlob.value?.size,
-  });
-  if (!project.value?.videoBlob) return;
+  if (!project.value || !videoBlob.value) return;
   phase.value = 'rendering';
   errorMessage.value = '';
   currentSec.value = 0;
@@ -109,10 +109,15 @@ async function startRender() {
   abortController = new AbortController();
 
   try {
+    const bgTime =
+      editorStore.project?.id === props.id
+        ? editorStore.previewTimeSec
+        : Math.min(0.5, Math.max(0, durationSec.value / 2));
     const blob = await renderVideoInWorker({
-      input: project.value.videoBlob,
+      input: videoBlob.value,
       settings: project.value.settings,
       logoBlob: logoBlob.value,
+      backgroundTimeSec: bgTime,
       signal: abortController.signal,
       onProgress: (p) => {
         currentSec.value = p.currentSec;
@@ -235,7 +240,7 @@ function formatDuration(sec: number): string {
 
     <section v-else class="body">
       <p class="error">{{ errorMessage || 'Ошибка' }}</p>
-      <button type="button" class="primary" @click="startRender" :disabled="!project?.videoBlob">Повторить</button>
+      <button type="button" class="primary" @click="goBack">К редактору</button>
     </section>
   </main>
 </template>

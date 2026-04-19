@@ -13,6 +13,19 @@ export class AppDB extends Dexie {
       templates: 'id, createdAt',
       logos: 'id',
     });
+    this.version(2)
+      .stores({
+        projects: 'id, updatedAt, createdAt',
+        templates: 'id, createdAt',
+        logos: 'id',
+      })
+      .upgrade((tx) =>
+        tx.table('projects').toCollection().modify((p) => {
+          delete p.thumbnailBlob;
+          delete p.videoBlob;
+          delete p.videoMeta;
+        }),
+      );
   }
 }
 

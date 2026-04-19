@@ -31,6 +31,7 @@ export interface RenderCallParams {
   input: Blob;
   settings: EditorSettings;
   logoBlob: Blob | null;
+  backgroundTimeSec: number;
   signal?: AbortSignal;
   onProgress?: (p: { currentSec: number; durationSec: number; frame: number; fps: number }) => void;
 }
@@ -110,6 +111,7 @@ export async function renderVideoInWorker(params: RenderCallParams): Promise<Blo
       input,
       settings: JSON.parse(JSON.stringify(params.settings)),
       logoBlob,
+      backgroundTimeSec: params.backgroundTimeSec,
     };
     w.postMessage(req);
   });

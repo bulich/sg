@@ -60,9 +60,6 @@ export interface Project {
   name: string;
   createdAt: number;
   updatedAt: number;
-  thumbnailBlob: Blob | null;
-  videoBlob: Blob | null;
-  videoMeta: VideoMeta | null;
   settings: EditorSettings;
 }
 
