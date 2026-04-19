@@ -197,8 +197,8 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
     if (!buffer) throw new Error('Пустой выходной буфер');
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
-    scene.destroy();
-    input.dispose();
+    try { scene.destroy(); } catch (err) { console.warn('[pipeline:scene.destroy]', err); }
+    try { input.dispose(); } catch (err) { console.warn('[pipeline:input.dispose]', err); }
     void finished;
   }
 }

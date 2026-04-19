@@ -127,6 +127,7 @@ async function startRender() {
     } else {
       phase.value = 'error';
       errorMessage.value = err instanceof Error ? err.message : 'Ошибка экспорта';
+      console.error('[export:error]', err);
       toast().show(errorMessage.value, { kind: 'error' });
     }
   } finally {

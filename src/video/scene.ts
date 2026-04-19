@@ -167,11 +167,21 @@ export class Scene {
   }
 
   destroy(): void {
-    if (this.frameTexture) this.frameTexture.destroy(true);
-    if (this.logoTexture) this.logoTexture.destroy(true);
+    try {
+      if (this.frameTexture) this.frameTexture.destroy(true);
+    } catch (err) { console.warn('[scene:destroy frameTexture]', err); }
+    try {
+      if (this.logoTexture) this.logoTexture.destroy(true);
+    } catch (err) { console.warn('[scene:destroy logoTexture]', err); }
     this.frameTexture = null;
     this.logoTexture = null;
-    this.app.destroy(false, { children: true, texture: false });
+    if (this.initialized) {
+      try {
+        this.app.destroy(false, { children: true, texture: false });
+      } catch (err) {
+        console.warn('[scene:destroy app]', err);
+      }
+    }
     this.initialized = false;
   }
 
