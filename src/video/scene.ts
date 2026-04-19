@@ -56,8 +56,9 @@ export class Scene {
     this.videoSprite = new Sprite();
     this.logoSprite = new Sprite();
     this.logoSprite.visible = false;
-    this.textSprite = new Text({ text: '', style: this.buildTextStyle() });
+    this.textSprite = new Text({ text: ' ', style: this.buildTextStyle() });
     this.textSprite.visible = false;
+    this.textSprite.renderable = false;
     this.width = OUTPUT_WIDTH;
     this.height = OUTPUT_HEIGHT;
   }
@@ -163,7 +164,13 @@ export class Scene {
 
   setText(settings: TextSettings): void {
     const content = settings.content;
-    this.textSprite.visible = content.length > 0;
+    if (!content) {
+      this.textSprite.visible = false;
+      this.textSprite.renderable = false;
+      return;
+    }
+    this.textSprite.visible = true;
+    this.textSprite.renderable = true;
     this.textSprite.text = content;
     this.textSprite.style = this.buildTextStyle(settings);
     const align = settings.align;

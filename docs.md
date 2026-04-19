@@ -87,11 +87,10 @@ interface EditorSettings {
 
 interface Project {
   id; name; createdAt; updatedAt;
-  thumbnailBlob: Blob|null;
-  videoBlob:     Blob|null;       // исходный MP4, хранится целиком
-  videoMeta:     VideoMeta|null;  // 1920×1080, durationSec, codec, hasAudio
-  settings:      EditorSettings;
+  settings: EditorSettings;
 }
+// Видео, миниатюра и videoMeta в IDB НЕ хранятся (см. §4) —
+// держатся только в in-memory кэше projectsStore на время сессии.
 
 interface Template     { id; name; createdAt; settings: EditorSettings; }
 interface LogoAsset    { id; blob: Blob; mimeType; width; height; }
@@ -105,19 +104,23 @@ interface LogoAsset    { id; blob: Blob; mimeType; width; height; }
 
 ## 4. Хранилище (IndexedDB через Dexie)
 
-`src/storage/db.ts`:
+`src/storage/db.ts` (Dexie v2):
 
 ```
-projects: 'id, updatedAt, createdAt'
+projects: 'id, updatedAt, createdAt'   // только метаданные + settings
 templates: 'id, createdAt'
-logos: 'id'
+logos: 'id'                            // logo-blob'ы хранятся в IDB
 ```
 
-Блобы (видео, thumbnail, логотипы) хранятся **целиком в IndexedDB**. Никаких отдельных BLOB-стораджей/URL — только Dexie.
+**В IDB хранятся только проекты (id/name/даты/settings), шаблоны и логотипы.** Видео-blob, миниатюра и `videoMeta` — НЕ персистятся. На iOS наблюдался баг: blob'ы крупного размера в IndexedDB превращались в «висячие» ссылки и при чтении выпадал `NotFoundError: The object can not be found here`, ломая экспорт. Поэтому видео и миниатюра живут только в in-memory `Map` внутри `projectsStore` (см. §5) — после reload пользователь должен переимпортировать видео.
+
+Логотипы оставлены в IDB (маленькие, переиспользуются между проектами); там сохранён `materializeBlob` (round-trip через `arrayBuffer`) на случай аналогичных глюков.
+
+Миграция v1→v2 (`db.ts`): `tx.table('projects').toCollection().modify(p => { delete p.thumbnailBlob; delete p.videoBlob; delete p.videoMeta })` — старые поля чистятся при первом открытии.
 
 `src/storage/persistent.ts` вызывается из `main.ts` один раз при старте: запрашивает `navigator.storage.persist()`, чтобы iOS не вычистил базу при переполнении. Если API недоступно — no-op.
 
-`src/storage/repositories.ts` — чистые функции (`createProject`, `setProjectVideo`, `setProjectSettings`, `saveLogo`, `applyTemplate`, …). Stores вызывают только их, не ходят в Dexie напрямую.
+`src/storage/repositories.ts` — чистые функции (`createProject`, `setProjectSettings`, `touchProject`, `saveLogo`, `applyTemplate`, …). `setProjectVideo` удалён. Stores вызывают только репозитории, не ходят в Dexie напрямую.
 
 `src/storage/schema.ts` — valibot-схемы с диапазонами (blurPx 0–200, fontSize 8–400, color в `#rrggbb` и т.д.). Используется при импорте шаблонов через `validateEditorSettings()` / `safeValidateEditorSettings()`.
 
@@ -126,14 +129,17 @@ logos: 'id'
 ## 5. Pinia stores
 
 ### `stores/projects.ts`
-- `projects: Project[]`, `loading`
+- `projects: Project[]`, `loading`, `cacheVersion` (счётчик для реактивной инвалидации session-кэша)
+- Модульный `videoCache: Map<projectId, { blob, meta, thumbnail }>` — единственное место, где живут видео и миниатюры. Чистится в `remove()` и `clearSessionVideo()`; теряется при reload.
 - `loadAll()` — сортировка по `updatedAt`
 - `create(name)`, `remove(id)`, `rename(id, name)`, `replace(project)`
-- `importVideo(projectId, file)` — читает meta, валидирует (`validateInputMeta`), делает thumbnail, сохраняет — всё через `repositories`. Используется и при первичном импорте из `ProjectsPage`, и при замене исходного видео в `EditorPage`: `setProjectVideo` трогает только `videoBlob`/`videoMeta`/`thumbnailBlob`, так что `settings` (фон, лого, текст, позиции) сохраняются.
+- `importVideo(projectId, file)` — читает meta (`readInputMeta`), валидирует (`validateInputMeta`), делает thumbnail (`extractThumbnail`), кладёт `{blob, meta, thumbnail}` в `videoCache`, бампает `cacheVersion`, обновляет `updatedAt` через `touchProject(id)`. Используется и при первичном импорте из `ProjectsPage`, и при замене видео в `EditorPage`. `settings` проекта не трогаются.
+- `getSessionVideo(id) → SessionVideo | null` — единственный путь добраться до blob'а.
 
 ### `stores/editor.ts`
 - Состояние: `project`, `settings`, `logoBlob`, `previewTimeSec`, `dirty`, `saving`
-- `openProject(id)` — загружает проект, клонирует settings (`structuredClone`), подтягивает `logoBlob` из таблицы `logos` по `settings.logo.assetId`
+- `videoBlob` / `videoMeta` / `duration` — computed-обёртки, читают из `projectsStore.getSessionVideo(project.id)` (с зависимостью от `projectsStore.cacheVersion`). Если в кэше пусто — `videoBlob === null`, в редакторе показывается empty-state «Загрузить видео» (см. §9).
+- `openProject(id)` — загружает проект, клонирует settings (`structuredClone`), подтягивает `logoBlob` из таблицы `logos` по `settings.logo.assetId`. После reload видео в кэше нет — это нормально.
 - Апдейтеры `updateBackground/updateMainVideo/updateLogo/updateText` — сливают patch + `scheduleSave()` (debounce 400 мс → `setProjectSettings` в IndexedDB)
 - `flushSave()` — принудительный сброс дебаунса (вызывается перед навигацией в export, уходом из редактора и заменой исходного видео)
 - `cloneSettings` — `JSON.parse(JSON.stringify(...))`, НЕ `structuredClone`: Vue reactive proxy не structured-cloneable, в Dexie и worker.postMessage уходит только plain-объект
@@ -168,23 +174,31 @@ logos: 'id'
 
 #### `renderVideo(opts: RenderOptions) → Blob`
 
+`RenderOptions = { input, settings, logoBlob, backgroundTimeSec, signal?, onProgress? }`.
+
 ```
 1. new Input({ BlobSource(opts.input), ALL_FORMATS })
-2. OffscreenCanvas(1080, 1920) + new Scene() + init
+2. OffscreenCanvas(1080, 1920) + new Scene() + init({ softwareBackground: true })
    → Scene.setBackground/setMainVideo/setText/setLogo
-3. new Output({ format: Mp4OutputFormat({ fastStart: 'in-memory' }),
+3. buildStaticBackground(videoTrack, backgroundTimeSec, bg):
+   • CanvasSink({ width≤960, fit: 'contain', poolSize: 1 }).getCanvas(t)
+   • Cover-fit на 1080×1920 в OffscreenCanvas + ctx.filter = `blur(${blurPx}px)`
+     (нативный гауссов blur Canvas API; рисуем с pad'ом ≥ 2·blurPx, чтобы не было светлых краёв)
+   • applyBrightnessSaturation (CPU)
+   → scene.setBackgroundFrame(bgCanvas)  // один раз, далее не трогаем
+4. new Output({ format: Mp4OutputFormat({ fastStart: 'in-memory' }),
                 target: new BufferTarget() })
-4. new CanvasSource(canvas, { codec: 'avc', bitrate: QUALITY_HIGH, keyFrameInterval: 2 })
+5. new CanvasSource(canvas, { codec: 'avc', bitrate: QUALITY_HIGH, keyFrameInterval: 2 })
    → output.addVideoTrack(videoSource)
-5. Если audioTrack есть и codec известен:
+6. Если audioTrack есть и codec известен:
      new EncodedAudioPacketSource(codec) + output.addAudioTrack(audioSource)
-6. await output.start()
-7. Параллельно две задачи:
+7. await output.start()
+8. Параллельно две задачи:
    • videoTask (CanvasSink, НЕ VideoSampleSink):
        sink = new CanvasSink(videoTrack, { poolSize: 2 })
        for await wrapped of sink.canvases(0, duration):
          ts = Math.max(0, wrapped.timestamp);
-         scene.setFrame(wrapped.canvas); scene.render();
+         scene.setFrame(wrapped.canvas); scene.render();   // фон уже установлен
          await videoSource.add(ts, wrapped.duration);
          onProgress({ currentSec, frame, fps })
        videoSource.close();
@@ -193,9 +207,11 @@ logos: 'id'
          if (packet.timestamp < 0) continue;  // дроп pre-roll / priming
          await audioSource.add(packet, first ? { decoderConfig } : undefined);
        audioSource.close();
-8. output.finalize()
-9. Blob из BufferTarget.buffer, mime: 'video/mp4'
+9. output.finalize()
+10. Blob из BufferTarget.buffer, mime: 'video/mp4'
 ```
+
+**Статический фон.** Раньше каждый кадр перерисовывал downscale-blur копию текущего фрейма (`drawBlurredBackground`) — на воркере с `softwareBackground: true` это давало низкокачественное «пиксельное» размытие. Сейчас фон рендерится **один раз** на кадре `backgroundTimeSec` (передаётся из `ExportPage`: значение `editorStore.previewTimeSec`, т.е. позиция таймлайн-слайдера; фолбэк — середина видео). Качество blur'а — нативный `ctx.filter = 'blur(Npx)'`, видео-цикл лишь обновляет foreground через `setFrame`. В editor preview это не видно: там кадр и фон всегда из одного `previewTimeSec`.
 
 Отмена — через `opts.signal?.aborted` на каждом шаге. При исключении: `output.cancel().catch(noop)`, затем проброс.
 
@@ -231,7 +247,8 @@ Message API:
 
 ```ts
 // → worker
-{ type: 'render', id, input: Blob, settings: EditorSettings, logoBlob: Blob|null }
+{ type: 'render', id, input: Blob, settings: EditorSettings,
+  logoBlob: Blob|null, backgroundTimeSec: number }
 { type: 'abort',  id }
 
 // ← worker
@@ -242,7 +259,7 @@ Message API:
 
 `workerClient.ts`:
 - Один ленивый shared `Worker` (`new URL('./worker.ts', import.meta.url)`, `{ type: 'module' }`).
-- `renderVideoInWorker({ input, settings, logoBlob, signal, onProgress })` — промис-обёртка.
+- `renderVideoInWorker({ input, settings, logoBlob, backgroundTimeSec, signal, onProgress })` — промис-обёртка.
 - **Важно:** `settings` до `postMessage` клонируется `JSON.parse(JSON.stringify(...))`. Приходит из Pinia как Vue-Proxy, который `structured-clone` не умеет сериализовать.
 - Abort: `signal` вешается на controller → шлёт `{ type: 'abort', id }` в воркер.
 
@@ -260,7 +277,7 @@ Message API:
 - `disposeSink` вызывается на unmount и при смене blob'a.
 
 ### `useProjectThumbnail(project)`
-- Создаёт/освобождает object URL для `thumbnailBlob`, cleanup на unmount.
+- Подписан на `projectsStore.cacheVersion` и тянет `getSessionVideo(id).thumbnail` из session-кэша. Создаёт/освобождает object URL, cleanup на unmount. Если в кэше нет (после reload) — возвращает `null`, в `ProjectCard` показывается пустой плейсхолдер.
 
 ### `useToast` — singleton-обёртка над `Toast.vue`, регистрируется из `App.vue` в `onMounted`.
 
@@ -271,8 +288,8 @@ Message API:
 ### Страницы
 
 - **`/` — ProjectsPage**: сетка `ProjectCard`'ов, FAB «Новый проект», action sheet (переименовать / удалить / сохранить как шаблон). Импорт файла — через `useFileDialog` (@vueuse) → валидация → `projectsStore.importVideo` → `router.push('editor')`.
-- **`/editor/:id` — EditorPage**: canvas 1080×1920 (CSS-масштабируется под экран), `MoveableOverlay` поверх, таймлайн-слайдер для скраб-превью (`v-model.number` на `store.previewTimeSec`), `InspectorTabs` с четырьмя панелями. Автосейв настроек. В хедере рядом с «Экспорт» — иконка-кнопка «Заменить видео»: открывает file picker, прогоняет через `validateInputMeta`, вызывает `projectsStore.importVideo(id, file)` (перезаписывает `videoBlob`/`videoMeta`/`thumbnailBlob`, **настройки проекта сохраняются**), затем `editorStore.openProject(id)` перечитывает проект — превью и таймлайн подхватывают новое видео.
-- **`/export/:id` — ExportPage**: фазы `loading → ready → rendering → done/canceled/error`. Прогресс-бар + `fps` + ETA. Кнопки Cancel (AbortController) / Save (`<a download>`) / Share (Web Share API, если `canShare({files})`).
+- **`/editor/:id` — EditorPage**: canvas 1080×1920 (CSS-масштабируется под экран), `MoveableOverlay` поверх, таймлайн-слайдер для скраб-превью (`v-model.number` на `store.previewTimeSec`; одновременно — выбор кадра, который пойдёт в **статический фон** при экспорте), `InspectorTabs` с четырьмя панелями. Автосейв настроек. В хедере рядом с «Экспорт» — иконка-кнопка «Заменить видео»: открывает file picker, прогоняет через `validateInputMeta`, вызывает `projectsStore.importVideo(id, file)` (обновляет session-кэш, **настройки проекта сохраняются**), затем `editorStore.openProject(id)` перечитывает проект — превью и таймлайн подхватывают новое видео. Если в кэше нет видео (после reload или прямой переход на проект) — поверх canvas показывается empty-state «Видео не загружено» + кнопка «Загрузить видео», которая дёргает тот же импорт-флоу.
+- **`/export/:id` — ExportPage**: фазы `loading → ready → rendering → done/canceled/error`. Если в session-кэше нет видео для этого id — фаза `error` со словом «Загрузите видео в редакторе» и кнопкой возврата. На старте экспорта читает blob/meta из `projectsStore.getSessionVideo(id)` и `backgroundTimeSec` из `editorStore.previewTimeSec` (если открыт тот же проект, иначе фолбэк на середину видео). Прогресс-бар + `fps` + ETA. Кнопки Cancel (AbortController) / Save (`<a download>`) / Share (Web Share API, если `canShare({files})`).
 
 ### MoveableOverlay (`components/editor/MoveableOverlay.vue`)
 
@@ -353,10 +370,11 @@ pnpm typecheck      # vue-tsc --noEmit
 └──────────────┘                      │   pipeline.readMeta  │
                                       │   validation         │
                                       │   pipeline.thumbnail │
-                                      │   repositories.*     │
+                                      │   videoCache.set()   │  ← in-memory only
+                                      │   touchProject(id)   │
                                       └──────────┬───────────┘
                                                  ▼
-                                         Dexie: projects
+                              Dexie: projects (id/name/dates/settings)
                                                  │
                                                  ▼
                                          /editor/:id
@@ -366,6 +384,7 @@ pnpm typecheck      # vue-tsc --noEmit
                                       │ editorStore          │
                                       │  openProject         │
                                       │  + Dexie: logos      │
+                                      │  + videoCache (read) │
                                       │  autosave (debounce) │
                                       └──────────┬───────────┘
                                                  ▼
@@ -395,7 +414,9 @@ pnpm typecheck      # vue-tsc --noEmit
        │ worker.ts (WebWorkerAdapter)│
        │  pipeline.renderVideo      │
        │   mediabunny Input         │
-       │   VideoSampleSink frames ──▶ Scene (OffscreenCanvas)
+       │   buildStaticBackground @  │
+       │     backgroundTimeSec      │ ──▶ scene.setBackgroundFrame (один раз)
+       │   CanvasSink frames        │ ──▶ scene.setFrame / render (per-frame)
        │   CanvasSource (AVC)       │
        │   EncodedAudioPacketSource │
        │   Mp4OutputFormat + Buffer │
@@ -422,7 +443,7 @@ pnpm typecheck      # vue-tsc --noEmit
 
 ## 15. Точки расширения
 
-- **Новый фильтр фона** → дополнить `BackgroundSettings` + `Scene.setBackground` + schema + `BackgroundPanel.vue`.
+- **Новый фильтр фона** → дополнить `BackgroundSettings` + `Scene.setBackground` (для preview, GPU-фильтры) + `buildStaticBackground` в `pipeline.ts` (для export, CPU/Canvas-фильтры) + schema + `BackgroundPanel.vue`.
 - **Новый шрифт** → добавить в `FONT_FAMILIES` (`constants.ts`), импортировать нужные веса в `fonts/index.ts`, при желании — прегрузить в воркере.
 - **Хранилище шаблонов в UI** → store/репозитории уже готовы (`templates`/`applyTemplate`), нужен только UI.
 - **Копирование видеотрека без перекодирования** (когда разрешение уже 1080×1920 и оверлеи не меняют пиксели) — заменить `CanvasSource` на `EncodedVideoPacketSource` + `EncodedPacketSink` по аналогии с аудио. Ускорит экспорт на порядок для «no-op» кейсов.
@@ -444,3 +465,5 @@ pnpm typecheck      # vue-tsc --noEmit
 | Экспорт: видно только исходное видео, без фона/лого/текста | `Texture.from(VideoFrame)` нестабилен под `WebWorkerAdapter` | Использовать `CanvasSink` вместо `VideoSampleSink` (уже сделано) |
 | Экспорт: повторный кадр на пулированных canvas'ах | `Texture.from` кэширует по источнику, `destroy(true)` ломает кэш | `Texture.from(source, true)` со `skipCache` (уже сделано) |
 | IndexedDB очистился на iOS | не запрошен persistent storage | убедиться, что `requestPersistentStorage()` вернул `true` после установки на Home Screen |
+| `NotFoundError: The object can not be found here` при чтении видео из IDB на iOS | iOS-баг: blob'ы крупного размера в IndexedDB протухают | Не хранить видео/миниатюру в IDB вообще. Держим в `projectsStore.videoCache` (Map в памяти); после reload пользователь переимпортирует видео (уже сделано, см. §4–5) |
+| Размытый фон выглядит «пиксельно» / низкого качества | Ранее каждый кадр рисовал downscale-blur при `softwareBackground: true` | Использовать статический фон: `buildStaticBackground` один раз с `ctx.filter = blur(Npx)` (нативный gauss), кадр выбирается слайдером превью (уже сделано, см. §7) |

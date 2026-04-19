@@ -99,6 +99,7 @@ onBeforeUnmount(() => {
 });
 
 async function startRender() {
+  if (phase.value === 'rendering') return;
   if (!project.value || !videoBlob.value) return;
   phase.value = 'rendering';
   errorMessage.value = '';
