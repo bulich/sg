@@ -1,0 +1,40 @@
+{
+  "name": "shorts-pwa",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/manrope": "^5.2.8",
+    "@fontsource/montserrat": "^5.2.8",
+    "@fontsource/open-sans": "^5.2.7",
+    "@fontsource/playfair-display": "^5.2.8",
+    "@fontsource/pt-sans": "^5.2.8",
+    "@fontsource/roboto": "^5.2.10",
+    "@fontsource/rubik": "^5.2.8",
+    "@vueuse/core": "^11.3.0",
+    "dexie": "^4.0.10",
+    "mediabunny": "^1.0.0",
+    "pinia": "^2.3.0",
+    "pixi.js": "^8.6.5",
+    "valibot": "^0.42.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "vue3-moveable": "^0.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vite-plugin-pwa": "^0.21.1",
+    "vue-tsc": "^2.1.10",
+    "workbox-window": "^7.3.0"
+  }
+}
