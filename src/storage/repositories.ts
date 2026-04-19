@@ -36,16 +36,40 @@ export async function createProject(name: string): Promise<Project> {
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
+  console.log('[repo:getProject] start', id);
   const project = await db.projects.get(id);
-  if (!project) return undefined;
-  if (project.videoBlob) project.videoBlob = await materializeBlob(project.videoBlob);
-  if (project.thumbnailBlob) project.thumbnailBlob = await materializeBlob(project.thumbnailBlob);
+  if (!project) {
+    console.warn('[repo:getProject] not found', id);
+    return undefined;
+  }
+  console.log('[repo:getProject] loaded', {
+    id,
+    hasVideo: !!project.videoBlob,
+    videoSize: project.videoBlob?.size,
+    videoType: project.videoBlob?.type,
+    hasThumb: !!project.thumbnailBlob,
+    thumbSize: project.thumbnailBlob?.size,
+  });
+  if (project.videoBlob) {
+    project.videoBlob = await materializeBlob(project.videoBlob, 'videoBlob');
+  }
+  if (project.thumbnailBlob) {
+    project.thumbnailBlob = await materializeBlob(project.thumbnailBlob, 'thumbnailBlob');
+  }
   return project;
 }
 
-async function materializeBlob(blob: Blob): Promise<Blob> {
-  const buffer = await blob.arrayBuffer();
-  return new Blob([buffer], { type: blob.type });
+async function materializeBlob(blob: Blob, label = 'blob'): Promise<Blob> {
+  console.log('[repo:materialize] start', label, { size: blob.size, type: blob.type });
+  try {
+    const buffer = await blob.arrayBuffer();
+    const fresh = new Blob([buffer], { type: blob.type });
+    console.log('[repo:materialize] ok', label, { size: fresh.size });
+    return fresh;
+  } catch (err) {
+    console.error('[repo:materialize] fail', label, err);
+    throw err;
+  }
 }
 
 export async function listProjects(): Promise<Project[]> {

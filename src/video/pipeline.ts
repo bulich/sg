@@ -152,11 +152,17 @@ export interface RenderOptions {
 }
 
 export async function renderVideo(opts: RenderOptions): Promise<Blob> {
+  console.log('[pipeline:renderVideo] start', {
+    inputSize: opts.input.size,
+    inputType: opts.input.type,
+    hasLogo: !!opts.logoBlob,
+  });
   const input = new Input({ source: new BlobSource(opts.input), formats: ALL_FORMATS });
   const canvas = new OffscreenCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
   const scene = new Scene();
   let finished = false;
   try {
+    console.log('[pipeline] scene.init');
     await scene.init({
       canvas,
       width: OUTPUT_WIDTH,
@@ -179,12 +185,16 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
     scene.setBackground(opts.settings.background);
     scene.setMainVideo(opts.settings.mainVideo);
     scene.setText(opts.settings.text);
+    console.log('[pipeline] scene.setLogo');
     await scene.setLogo(opts.logoBlob, opts.settings.logo);
 
+    console.log('[pipeline] getPrimaryVideoTrack');
     const videoTrack = await input.getPrimaryVideoTrack();
     if (!videoTrack) throw new Error('Видео-дорожка не найдена');
+    console.log('[pipeline] track', { w: videoTrack.displayWidth, h: videoTrack.displayHeight, codec: videoTrack.codec });
     const audioTrack = await input.getPrimaryAudioTrack();
     const duration = await input.computeDuration();
+    console.log('[pipeline] duration', duration, 'hasAudio', !!audioTrack);
 
     const output = new Output({
       format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
@@ -206,6 +216,7 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       output.addAudioTrack(audioSource);
     }
 
+    console.log('[pipeline] output.start');
     await output.start();
 
     const startTime = performance.now();
@@ -213,9 +224,14 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
 
     const videoSink = new CanvasSink(videoTrack, { poolSize: 2 });
     const videoTask = (async () => {
+      let firstFrameLogged = false;
       for await (const wrapped of videoSink.canvases(0, duration)) {
         if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
         const ts = Math.max(0, wrapped.timestamp);
+        if (!firstFrameLogged) {
+          console.log('[pipeline] first video frame', { ts: wrapped.timestamp, w: (wrapped.canvas as OffscreenCanvas).width, h: (wrapped.canvas as OffscreenCanvas).height });
+          firstFrameLogged = true;
+        }
         drawBlurredBackground(bgCtx, bgSmallCtx, bgSmall, wrapped.canvas, OUTPUT_WIDTH, OUTPUT_HEIGHT, bg.brightness, bg.saturation);
         scene.setBackgroundFrame(bgCanvas);
         scene.setFrame(wrapped.canvas);
@@ -230,6 +246,7 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
           fps: elapsed > 0 ? framesRendered / elapsed : 0,
         });
       }
+      console.log('[pipeline] video loop end, frames', framesRendered);
       videoSource.close();
     })();
 
@@ -262,8 +279,10 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       throw err;
     }
 
+    console.log('[pipeline] finalize');
     await output.finalize();
     finished = true;
+    console.log('[pipeline] finalized');
 
     const buffer = (output.target as BufferTarget).buffer;
     if (!buffer) throw new Error('Пустой выходной буфер');

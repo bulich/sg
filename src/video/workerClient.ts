@@ -13,8 +13,14 @@ function getWorker(): Worker {
       console.error('[worker:messageerror]', ev);
     });
     worker.addEventListener('message', (ev: MessageEvent<WorkerResponse>) => {
-      if (ev.data?.type === 'error' && ev.data.id === 'global') {
-        console.error(ev.data.message);
+      const d = ev.data;
+      if (!d) return;
+      if (d.type === 'error' && d.id === 'global') {
+        console.error(d.message);
+      } else if (d.type === 'log') {
+        if (d.level === 'error') console.error(d.message);
+        else if (d.level === 'warn') console.warn(d.message);
+        else console.log(d.message);
       }
     });
   }
@@ -31,16 +37,31 @@ export interface RenderCallParams {
 
 let counter = 0;
 
-async function detachBlob(blob: Blob): Promise<Blob> {
-  const buffer = await blob.arrayBuffer();
-  return new Blob([buffer], { type: blob.type });
+async function detachBlob(blob: Blob, label: string): Promise<Blob> {
+  console.log('[workerClient:detach] start', label, { size: blob.size, type: blob.type });
+  try {
+    const buffer = await blob.arrayBuffer();
+    const fresh = new Blob([buffer], { type: blob.type });
+    console.log('[workerClient:detach] ok', label, { size: fresh.size });
+    return fresh;
+  } catch (err) {
+    console.error('[workerClient:detach] fail', label, err);
+    throw err;
+  }
 }
 
 export async function renderVideoInWorker(params: RenderCallParams): Promise<Blob> {
+  console.log('[workerClient:render] begin', {
+    inputSize: params.input.size,
+    inputType: params.input.type,
+    hasLogo: !!params.logoBlob,
+    logoSize: params.logoBlob?.size,
+  });
   const w = getWorker();
   const id = `r_${Date.now()}_${++counter}`;
-  const input = await detachBlob(params.input);
-  const logoBlob = params.logoBlob ? await detachBlob(params.logoBlob) : null;
+  const input = await detachBlob(params.input, 'input');
+  const logoBlob = params.logoBlob ? await detachBlob(params.logoBlob, 'logo') : null;
+  console.log('[workerClient:render] posting', id);
 
   return new Promise<Blob>((resolve, reject) => {
     function cleanup() {

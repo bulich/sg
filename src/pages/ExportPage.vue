@@ -92,6 +92,13 @@ onBeforeUnmount(() => {
 });
 
 async function startRender() {
+  console.log('[exportPage:startRender] click', {
+    hasProject: !!project.value,
+    hasVideo: !!project.value?.videoBlob,
+    videoSize: project.value?.videoBlob?.size,
+    hasLogo: !!logoBlob.value,
+    logoSize: logoBlob.value?.size,
+  });
   if (!project.value?.videoBlob) return;
   phase.value = 'rendering';
   errorMessage.value = '';

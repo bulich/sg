@@ -25,11 +25,31 @@ export type WorkerResponse =
       fps: number;
     }
   | { type: 'done'; id: string; blob: Blob }
-  | { type: 'error'; id: string; message: string };
+  | { type: 'error'; id: string; message: string }
+  | { type: 'log'; level: 'log' | 'warn' | 'error'; message: string };
 
 const abortControllers = new Map<string, AbortController>();
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+
+function formatLogArg(v: unknown): string {
+  if (v instanceof Error) return `${v.name}: ${v.message}${v.stack ? '\n' + v.stack : ''}`;
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+for (const level of ['log', 'warn', 'error'] as const) {
+  const orig = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    try {
+      ctx.postMessage({
+        type: 'log',
+        level,
+        message: '[worker] ' + args.map(formatLogArg).join(' '),
+      } satisfies WorkerResponse);
+    } catch { /* noop */ }
+    orig(...args);
+  };
+}
 
 ctx.addEventListener('error', (ev) => {
   ctx.postMessage({
@@ -55,6 +75,11 @@ ctx.addEventListener('message', (ev: MessageEvent<WorkerRequest>) => {
     return;
   }
   if (msg.type === 'render') {
+    console.log('[worker:render] received', msg.id, {
+      inputSize: msg.input.size,
+      inputType: msg.input.type,
+      hasLogo: !!msg.logoBlob,
+    });
     const ctrl = new AbortController();
     abortControllers.set(msg.id, ctrl);
     renderVideo({
