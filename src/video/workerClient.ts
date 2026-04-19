@@ -20,9 +20,16 @@ export interface RenderCallParams {
 
 let counter = 0;
 
-export function renderVideoInWorker(params: RenderCallParams): Promise<Blob> {
+async function detachBlob(blob: Blob): Promise<Blob> {
+  const buffer = await blob.arrayBuffer();
+  return new Blob([buffer], { type: blob.type });
+}
+
+export async function renderVideoInWorker(params: RenderCallParams): Promise<Blob> {
   const w = getWorker();
   const id = `r_${Date.now()}_${++counter}`;
+  const input = await detachBlob(params.input);
+  const logoBlob = params.logoBlob ? await detachBlob(params.logoBlob) : null;
 
   return new Promise<Blob>((resolve, reject) => {
     function cleanup() {
@@ -65,9 +72,9 @@ export function renderVideoInWorker(params: RenderCallParams): Promise<Blob> {
     const req: WorkerRequest = {
       type: 'render',
       id,
-      input: params.input,
+      input,
       settings: JSON.parse(JSON.stringify(params.settings)),
-      logoBlob: params.logoBlob,
+      logoBlob,
     };
     w.postMessage(req);
   });

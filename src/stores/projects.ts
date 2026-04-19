@@ -54,12 +54,18 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   async function importVideo(projectId: string, file: Blob) {
-    const meta = await readInputMeta(file);
+    const blob = await toStorableBlob(file);
+    const meta = await readInputMeta(blob);
     validateInputMeta(meta);
-    const thumbnail = await extractThumbnail(file);
-    await setProjectVideo(projectId, file, meta, thumbnail);
+    const thumbnail = await extractThumbnail(blob);
+    await setProjectVideo(projectId, blob, meta, thumbnail);
     const updated = await getProject(projectId);
     if (updated) replace(updated);
+  }
+
+  async function toStorableBlob(source: Blob): Promise<Blob> {
+    const buffer = await source.arrayBuffer();
+    return new Blob([buffer], { type: source.type || 'video/mp4' });
   }
 
   return { projects, loading, loadAll, create, remove, rename, replace, importVideo };
