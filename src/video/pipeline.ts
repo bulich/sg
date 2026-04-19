@@ -63,24 +63,60 @@ export async function extractThumbnail(
 
 function drawBlurredBackground(
   ctx: OffscreenCanvasRenderingContext2D,
+  smallCtx: OffscreenCanvasRenderingContext2D,
+  smallCanvas: OffscreenCanvas,
   source: CanvasImageSource,
   width: number,
   height: number,
-  filter: string,
+  brightness: number,
+  saturation: number,
 ): void {
   const sw = (source as HTMLCanvasElement | OffscreenCanvas).width;
   const sh = (source as HTMLCanvasElement | OffscreenCanvas).height;
-  const scale = Math.max(width / sw, height / sh);
-  const dw = sw * scale;
-  const dh = sh * scale;
-  const dx = (width - dw) / 2;
-  const dy = (height - dh) / 2;
-  ctx.save();
-  ctx.filter = 'none';
+  const smallW = smallCanvas.width;
+  const smallH = smallCanvas.height;
+  const smallScale = Math.max(smallW / sw, smallH / sh);
+  const sdw = sw * smallScale;
+  const sdh = sh * smallScale;
+  smallCtx.imageSmoothingEnabled = true;
+  smallCtx.imageSmoothingQuality = 'high';
+  smallCtx.clearRect(0, 0, smallW, smallH);
+  smallCtx.drawImage(source, (smallW - sdw) / 2, (smallH - sdh) / 2, sdw, sdh);
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, width, height);
-  ctx.filter = filter;
-  ctx.drawImage(source, dx, dy, dw, dh);
-  ctx.restore();
+  ctx.drawImage(smallCanvas, 0, 0, width, height);
+
+  applyBrightnessSaturation(ctx, width, height, brightness, saturation);
+}
+
+function applyBrightnessSaturation(
+  ctx: OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number,
+  brightness: number,
+  saturation: number,
+): void {
+  if (brightness === 1 && saturation === 1) return;
+  const img = ctx.getImageData(0, 0, width, height);
+  const data = img.data;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = data[i]!;
+    let g = data[i + 1]!;
+    let b = data[i + 2]!;
+    const gray = 0.2989 * r + 0.587 * g + 0.114 * b;
+    r = gray + (r - gray) * saturation;
+    g = gray + (g - gray) * saturation;
+    b = gray + (b - gray) * saturation;
+    r *= brightness;
+    g *= brightness;
+    b *= brightness;
+    data[i] = r < 0 ? 0 : r > 255 ? 255 : r;
+    data[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+    data[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 async function canvasToBlob(
@@ -133,7 +169,12 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
     const bgCtx = bgCanvas.getContext('2d');
     if (!bgCtx) throw new Error('2D контекст для фона недоступен');
     const bg = opts.settings.background;
-    const bgFilter = `blur(${Math.max(0, bg.blurPx)}px) brightness(${bg.brightness}) saturate(${bg.saturation})`;
+    const blurDownscale = Math.max(1, Math.round(24 + Math.max(0, bg.blurPx)));
+    const blurW = Math.max(8, Math.round(OUTPUT_WIDTH / blurDownscale));
+    const blurH = Math.max(8, Math.round(OUTPUT_HEIGHT / blurDownscale));
+    const bgSmall = new OffscreenCanvas(blurW, blurH);
+    const bgSmallCtx = bgSmall.getContext('2d');
+    if (!bgSmallCtx) throw new Error('2D контекст для фона недоступен');
 
     scene.setBackground(opts.settings.background);
     scene.setMainVideo(opts.settings.mainVideo);
@@ -175,7 +216,7 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       for await (const wrapped of videoSink.canvases(0, duration)) {
         if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
         const ts = Math.max(0, wrapped.timestamp);
-        drawBlurredBackground(bgCtx, wrapped.canvas, OUTPUT_WIDTH, OUTPUT_HEIGHT, bgFilter);
+        drawBlurredBackground(bgCtx, bgSmallCtx, bgSmall, wrapped.canvas, OUTPUT_WIDTH, OUTPUT_HEIGHT, bg.brightness, bg.saturation);
         scene.setBackgroundFrame(bgCanvas);
         scene.setFrame(wrapped.canvas);
         scene.render();

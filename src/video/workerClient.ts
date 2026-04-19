@@ -59,9 +59,11 @@ export async function renderVideoInWorker(params: RenderCallParams): Promise<Blo
         });
       } else if (m.type === 'done') {
         cleanup();
+        disposeRenderWorker();
         resolve(m.blob);
       } else if (m.type === 'error') {
         cleanup();
+        disposeRenderWorker();
         reject(new Error(m.message));
       }
     }
