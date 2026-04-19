@@ -36,11 +36,24 @@ export async function createProject(name: string): Promise<Project> {
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
-  return await db.projects.get(id);
+  const project = await db.projects.get(id);
+  if (!project) return undefined;
+  if (project.videoBlob) project.videoBlob = await materializeBlob(project.videoBlob);
+  if (project.thumbnailBlob) project.thumbnailBlob = await materializeBlob(project.thumbnailBlob);
+  return project;
+}
+
+async function materializeBlob(blob: Blob): Promise<Blob> {
+  const buffer = await blob.arrayBuffer();
+  return new Blob([buffer], { type: blob.type });
 }
 
 export async function listProjects(): Promise<Project[]> {
-  return await db.projects.orderBy('updatedAt').reverse().toArray();
+  const projects = await db.projects.orderBy('updatedAt').reverse().toArray();
+  for (const p of projects) {
+    if (p.thumbnailBlob) p.thumbnailBlob = await materializeBlob(p.thumbnailBlob);
+  }
+  return projects;
 }
 
 export async function updateProject(
@@ -102,7 +115,10 @@ export async function saveLogo(blob: Blob): Promise<LogoAsset> {
 }
 
 export async function getLogo(id: string): Promise<LogoAsset | undefined> {
-  return await db.logos.get(id);
+  const asset = await db.logos.get(id);
+  if (!asset) return undefined;
+  asset.blob = await materializeBlob(asset.blob);
+  return asset;
 }
 
 export async function deleteLogo(id: string): Promise<void> {
