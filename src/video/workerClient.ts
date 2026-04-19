@@ -70,6 +70,7 @@ export async function renderVideoInWorker(params: RenderCallParams): Promise<Blo
     }
     function onMessage(ev: MessageEvent<WorkerResponse>) {
       const m = ev.data;
+      if (m.type === 'log') return;
       if (m.id !== id) return;
       if (m.type === 'progress') {
         params.onProgress?.({
