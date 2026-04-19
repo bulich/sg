@@ -31,6 +31,23 @@ const abortControllers = new Map<string, AbortController>();
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+ctx.addEventListener('error', (ev) => {
+  ctx.postMessage({
+    type: 'error',
+    id: 'global',
+    message: `[worker:global] ${ev.message} @ ${ev.filename}:${ev.lineno}`,
+  } satisfies WorkerResponse);
+});
+ctx.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
+  const r = ev.reason;
+  const msg = r instanceof Error ? `${r.name}: ${r.message}\n${r.stack ?? ''}` : String(r);
+  ctx.postMessage({
+    type: 'error',
+    id: 'global',
+    message: `[worker:unhandledrejection] ${msg}`,
+  } satisfies WorkerResponse);
+});
+
 ctx.addEventListener('message', (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
   if (msg.type === 'abort') {
@@ -60,9 +77,13 @@ ctx.addEventListener('message', (ev: MessageEvent<WorkerRequest>) => {
         ctx.postMessage({ type: 'done', id: msg.id, blob } satisfies WorkerResponse);
       })
       .catch((err: unknown) => {
-        const message =
-          err instanceof Error ? err.message : typeof err === 'string' ? err : 'Ошибка рендера';
-        ctx.postMessage({ type: 'error', id: msg.id, message } satisfies WorkerResponse);
+        const detail =
+          err instanceof Error
+            ? `${err.name}: ${err.message}${err.stack ? '\n' + err.stack : ''}`
+            : typeof err === 'string'
+              ? err
+              : JSON.stringify(err);
+        ctx.postMessage({ type: 'error', id: msg.id, message: detail } satisfies WorkerResponse);
       })
       .finally(() => {
         abortControllers.delete(msg.id);

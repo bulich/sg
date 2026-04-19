@@ -99,6 +99,7 @@ async function onFileSelected(event: Event) {
   <main class="page">
     <header class="header">
       <h1>Проекты</h1>
+      <router-link :to="{ name: 'logs' }" class="logs-link" aria-label="Логи">Логи</router-link>
     </header>
 
     <section v-if="store.loading" class="state muted">Загрузка…</section>

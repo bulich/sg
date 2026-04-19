@@ -6,6 +6,17 @@ let worker: Worker | null = null;
 function getWorker(): Worker {
   if (!worker) {
     worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    worker.addEventListener('error', (ev) => {
+      console.error('[worker:error]', ev.message, ev.filename + ':' + ev.lineno, ev.error);
+    });
+    worker.addEventListener('messageerror', (ev) => {
+      console.error('[worker:messageerror]', ev);
+    });
+    worker.addEventListener('message', (ev: MessageEvent<WorkerResponse>) => {
+      if (ev.data?.type === 'error' && ev.data.id === 'global') {
+        console.error(ev.data.message);
+      }
+    });
   }
   return worker;
 }
