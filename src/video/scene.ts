@@ -326,15 +326,16 @@ async function rasterizeSvgBlob(blob: Blob): Promise<ImageBitmap> {
   try {
     return await createImageBitmap(blob);
   } catch {
-    const text = await blob.text();
-    const { width, height } = readSvgSize(text);
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext('2d') as Ctx | null;
-    if (!ctx) throw new Error('2D контекст недоступен');
-    const img = await loadImageFromSvgText(text);
-    ctx.drawImage(img, 0, 0, width, height);
-    return await createImageBitmap(canvas);
+    // iOS Safari fails createImageBitmap on SVG — fall through to <img> rasterization
   }
+  const text = await blob.text();
+  const { width, height } = readSvgSize(text);
+  const source = await loadSvgAsImageSource(text, width, height);
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d') as Ctx | null;
+  if (!ctx) throw new Error('2D контекст недоступен');
+  ctx.drawImage(source, 0, 0, width, height);
+  return await createImageBitmap(canvas);
 }
 
 function readSvgSize(svg: string): { width: number; height: number } {
@@ -353,7 +354,29 @@ function readSvgSize(svg: string): { width: number; height: number } {
   return { width: w || 512, height: h || 512 };
 }
 
-async function loadImageFromSvgText(svg: string): Promise<ImageBitmap> {
+async function loadSvgAsImageSource(
+  svg: string,
+  width: number,
+  height: number,
+): Promise<CanvasImageSource> {
   const blob = new Blob([svg], { type: 'image/svg+xml' });
+  if (typeof Image !== 'undefined') {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image(width, height);
+      img.decoding = 'async';
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Не удалось загрузить SVG'));
+        img.src = url;
+      });
+      if (typeof img.decode === 'function') {
+        try { await img.decode(); } catch { /* noop */ }
+      }
+      return img;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
   return await createImageBitmap(blob);
 }
