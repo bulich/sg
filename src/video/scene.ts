@@ -1,15 +1,3 @@
-import {
-  Application,
-  BlurFilter,
-  Color,
-  ColorMatrixFilter,
-  Container,
-  Sprite,
-  Text,
-  TextStyle,
-  Texture,
-} from 'pixi.js';
-import type { ColorSource } from 'pixi.js';
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from '@/constants';
 import type {
   BackgroundSettings,
@@ -24,173 +12,119 @@ export interface SceneInitOptions {
   canvas: HTMLCanvasElement | OffscreenCanvas;
   width?: number;
   height?: number;
-  backgroundColor?: ColorSource;
-  antialias?: boolean;
+  backgroundColor?: string;
   softwareBackground?: boolean;
 }
 
-export class Scene {
-  private app: Application;
-  private root: Container;
-  private bgSprite: Sprite;
-  private bgBlur: BlurFilter;
-  private bgColor: ColorMatrixFilter;
-  private videoSprite: Sprite;
-  private logoSprite: Sprite;
-  private textSprite: Text;
-  private frameTexture: Texture | null = null;
-  private bgFrameTexture: Texture | null = null;
-  private logoTexture: Texture | null = null;
-  private initialized = false;
-  private softwareBackground = false;
-  private width: number;
-  private height: number;
+type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
+type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-  constructor() {
-    this.app = new Application();
-    this.root = new Container();
-    this.bgSprite = new Sprite();
-    this.bgBlur = new BlurFilter({ strength: 40, quality: 4, kernelSize: 9 });
-    this.bgColor = new ColorMatrixFilter();
-    this.bgSprite.filters = [this.bgBlur, this.bgColor];
-    this.videoSprite = new Sprite();
-    this.logoSprite = new Sprite();
-    this.logoSprite.visible = false;
-    this.textSprite = new Text({ text: ' ', style: this.buildTextStyle() });
-    this.textSprite.visible = false;
-    this.textSprite.renderable = false;
-    this.width = OUTPUT_WIDTH;
-    this.height = OUTPUT_HEIGHT;
-  }
+export class Scene {
+  private canvas: AnyCanvas | null = null;
+  private ctx: Ctx | null = null;
+  private width = OUTPUT_WIDTH;
+  private height = OUTPUT_HEIGHT;
+  private backgroundColor = '#000000';
+  private softwareBackground = false;
+
+  private frameSource: FrameSource | null = null;
+  private bgFrameSource: FrameSource | null = null;
+  private logoSource: ImageBitmap | null = null;
+  private textCanvas: AnyCanvas | null = null;
+
+  private bgSettings: BackgroundSettings = { blurPx: 0, brightness: 1, saturation: 1 };
+  private mainVideoSettings: MainVideoSettings = { widthPercent: 100, offsetY: 0 };
+  private logoSettings: LogoSettings = {
+    assetId: null, x: 0, y: 0, width: 0, height: 0, opacity: 1,
+  };
+  private textPosition = { x: 0, y: 0 };
 
   async init(options: SceneInitOptions): Promise<void> {
     this.width = options.width ?? OUTPUT_WIDTH;
     this.height = options.height ?? OUTPUT_HEIGHT;
+    this.backgroundColor = options.backgroundColor ?? '#000000';
     this.softwareBackground = options.softwareBackground ?? false;
-    if (this.softwareBackground) {
-      this.bgSprite.filters = [];
-    }
-    await this.app.init({
-      canvas: options.canvas as HTMLCanvasElement,
-      width: this.width,
-      height: this.height,
-      backgroundColor: options.backgroundColor ?? 0x000000,
-      antialias: options.antialias ?? true,
-      autoStart: false,
-      preference: 'webgl',
-      resolution: 1,
-      preserveDrawingBuffer: true,
-    });
-    this.root.addChild(this.bgSprite);
-    this.root.addChild(this.videoSprite);
-    this.root.addChild(this.logoSprite);
-    this.root.addChild(this.textSprite);
-    this.app.stage.addChild(this.root);
-    this.initialized = true;
+    this.canvas = options.canvas;
+    this.canvas.width = this.width;
+    this.canvas.height = this.height;
+    const ctx = this.canvas.getContext('2d', { alpha: false }) as Ctx | null;
+    if (!ctx) throw new Error('2D контекст недоступен');
+    this.ctx = ctx;
   }
 
   setFrame(source: FrameSource | null): void {
-    if (this.frameTexture) {
-      this.frameTexture.destroy(true);
-      this.frameTexture = null;
-    }
-    if (!source) {
-      this.videoSprite.visible = false;
-      if (!this.softwareBackground) this.bgSprite.visible = false;
-      return;
-    }
-    this.frameTexture = Texture.from(source, true);
-    this.videoSprite.texture = this.frameTexture;
-    this.videoSprite.visible = true;
-    if (!this.softwareBackground) {
-      this.bgSprite.texture = this.frameTexture;
-      this.bgSprite.visible = true;
-      this.layoutBackground(this.frameTexture);
-    }
-    this.layoutMainVideo(this._lastMainVideo);
+    this.frameSource = source;
   }
 
   setBackgroundFrame(source: FrameSource | null): void {
-    if (this.bgFrameTexture) {
-      this.bgFrameTexture.destroy(true);
-      this.bgFrameTexture = null;
-    }
-    if (!source) {
-      this.bgSprite.visible = false;
-      return;
-    }
-    this.bgFrameTexture = Texture.from(source, true);
-    this.bgSprite.texture = this.bgFrameTexture;
-    this.bgSprite.visible = true;
-    this.layoutBackground(this.bgFrameTexture);
+    this.bgFrameSource = source;
   }
 
-  private _lastMainVideo: MainVideoSettings = { widthPercent: 100, offsetY: 0 };
-
   setBackground(settings: BackgroundSettings): void {
-    if (this.softwareBackground) return;
-    this.bgBlur.strength = Math.max(0, settings.blurPx);
-    this.bgColor.reset();
-    this.bgColor.brightness(settings.brightness, false);
-    this.bgColor.saturate(settings.saturation - 1, true);
+    this.bgSettings = settings;
   }
 
   setMainVideo(settings: MainVideoSettings): void {
-    this._lastMainVideo = settings;
-    this.layoutMainVideo(settings);
+    this.mainVideoSettings = settings;
   }
 
   async setLogo(blob: Blob | null, settings: LogoSettings): Promise<void> {
-    if (!blob) {
-      this.logoSprite.visible = false;
-      this.logoSprite.texture = Texture.EMPTY;
-      if (this.logoTexture) {
-        this.logoTexture.destroy(true);
-        this.logoTexture = null;
-      }
-      return;
+    this.logoSettings = settings;
+    if (this.logoSource) {
+      try { this.logoSource.close(); } catch { /* noop */ }
+      this.logoSource = null;
     }
-    const texture = await loadBlobTexture(blob);
-    if (this.logoTexture) this.logoTexture.destroy(true);
-    this.logoTexture = texture;
-    this.logoSprite.texture = texture;
-    this.applyLogoSettings(settings);
+    if (!blob) return;
+    this.logoSource = await loadLogoBitmap(blob);
   }
 
   updateLogoSettings(settings: LogoSettings): void {
-    if (!this.logoTexture) return;
-    this.applyLogoSettings(settings);
+    this.logoSettings = settings;
   }
 
   setText(settings: TextSettings): void {
     const content = settings.content;
     if (!content) {
-      this.textSprite.visible = false;
-      this.textSprite.renderable = false;
+      this.textCanvas = null;
       return;
     }
-    this.textSprite.visible = true;
-    this.textSprite.renderable = true;
-    this.textSprite.text = content;
-    this.textSprite.style = this.buildTextStyle(settings);
-    const align = settings.align;
-    const anchorX = align === 'center' ? 0.5 : align === 'right' ? 1 : 0;
-    this.textSprite.anchor.set(anchorX, 0);
-    this.textSprite.position.set(settings.x, settings.y);
+    const rendered = renderTextCanvas(content, settings);
+    this.textCanvas = rendered.canvas;
+    const anchorX = settings.align === 'center' ? 0.5 : settings.align === 'right' ? 1 : 0;
+    this.textPosition = {
+      x: settings.x - anchorX * rendered.canvas.width + rendered.offsetX,
+      y: settings.y - rendered.padding,
+    };
   }
 
   render(): void {
-    if (!this.initialized) return;
-    this.app.render();
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.filter = 'none';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = this.backgroundColor;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    this.drawBackground(ctx);
+    this.drawMainVideo(ctx);
+    this.drawLogo(ctx);
+    this.drawText(ctx);
+
+    ctx.restore();
   }
 
   async extractBlob(type = 'image/jpeg', quality = 0.9): Promise<Blob> {
-    const canvas = this.app.canvas as HTMLCanvasElement | OffscreenCanvas;
-    if (isOffscreen(canvas)) {
-      return await canvas.convertToBlob({ type, quality });
+    if (!this.canvas) throw new Error('Scene не инициализирована');
+    if (isOffscreen(this.canvas)) {
+      return await this.canvas.convertToBlob({ type, quality });
     }
+    const html = this.canvas;
     return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
+      html.toBlob(
         (b) => (b ? resolve(b) : reject(new Error('canvas → blob failed'))),
         type,
         quality,
@@ -199,97 +133,177 @@ export class Scene {
   }
 
   destroy(): void {
-    try {
-      if (this.frameTexture) this.frameTexture.destroy(true);
-    } catch (err) { console.warn('[scene:destroy frameTexture]', err); }
-    try {
-      if (this.bgFrameTexture) this.bgFrameTexture.destroy(true);
-    } catch (err) { console.warn('[scene:destroy bgFrameTexture]', err); }
-    try {
-      if (this.logoTexture) this.logoTexture.destroy(true);
-    } catch (err) { console.warn('[scene:destroy logoTexture]', err); }
-    this.frameTexture = null;
-    this.bgFrameTexture = null;
-    this.logoTexture = null;
-    if (this.initialized) {
-      try {
-        this.app.destroy(false, { children: true, texture: false });
-      } catch (err) {
-        console.warn('[scene:destroy app]', err);
-      }
+    if (this.logoSource) {
+      try { this.logoSource.close(); } catch { /* noop */ }
+      this.logoSource = null;
     }
-    this.initialized = false;
+    this.frameSource = null;
+    this.bgFrameSource = null;
+    this.textCanvas = null;
+    this.ctx = null;
+    this.canvas = null;
   }
 
-  private layoutBackground(texture: Texture): void {
-    const tw = texture.width;
-    const th = texture.height;
-    const scale = Math.max(this.width / tw, this.height / th);
-    this.bgSprite.anchor.set(0.5);
-    this.bgSprite.position.set(this.width / 2, this.height / 2);
-    this.bgSprite.scale.set(scale);
-  }
+  private drawBackground(ctx: Ctx): void {
+    if (this.bgFrameSource) {
+      const { w, h } = sourceSize(this.bgFrameSource);
+      if (w === this.width && h === this.height) {
+        ctx.drawImage(this.bgFrameSource, 0, 0);
+      } else {
+        const fit = fitCover(w, h, this.width, this.height);
+        ctx.drawImage(this.bgFrameSource, fit.dx, fit.dy, fit.dw, fit.dh);
+      }
+      return;
+    }
+    if (this.softwareBackground || !this.frameSource) return;
 
-  private layoutMainVideo(settings: MainVideoSettings): void {
-    if (!this.frameTexture) return;
-    const tw = this.frameTexture.width;
-    const th = this.frameTexture.height;
-    const scale = (this.width * settings.widthPercent) / 100 / tw;
-    this.videoSprite.anchor.set(0.5);
-    this.videoSprite.scale.set(scale);
-    this.videoSprite.position.set(
-      this.width / 2,
-      this.height / 2 + settings.offsetY,
+    const bg = this.bgSettings;
+    const { w, h } = sourceSize(this.frameSource);
+    const fit = fitCover(w, h, this.width, this.height);
+
+    const blur = Math.max(0, bg.blurPx);
+    const parts: string[] = [];
+    if (blur > 0) parts.push(`blur(${blur}px)`);
+    if (bg.brightness !== 1) parts.push(`brightness(${bg.brightness})`);
+    if (bg.saturation !== 1) parts.push(`saturate(${bg.saturation})`);
+    ctx.filter = parts.length > 0 ? parts.join(' ') : 'none';
+
+    const pad = Math.ceil(blur * 2);
+    ctx.drawImage(
+      this.frameSource,
+      fit.dx - pad,
+      fit.dy - pad,
+      fit.dw + pad * 2,
+      fit.dh + pad * 2,
     );
-    this.videoSprite.visible = this.frameTexture !== null;
-    void th;
+    ctx.filter = 'none';
   }
 
-  private applyLogoSettings(settings: LogoSettings): void {
-    if (!this.logoTexture) return;
-    this.logoSprite.visible = true;
-    this.logoSprite.anchor.set(0);
-    this.logoSprite.position.set(settings.x, settings.y);
-    this.logoSprite.width = settings.width;
-    this.logoSprite.height = settings.height;
-    this.logoSprite.alpha = settings.opacity;
+  private drawMainVideo(ctx: Ctx): void {
+    if (!this.frameSource) return;
+    const s = this.mainVideoSettings;
+    const { w, h } = sourceSize(this.frameSource);
+    const scale = (this.width * s.widthPercent) / 100 / w;
+    const targetW = w * scale;
+    const targetH = h * scale;
+    const x = (this.width - targetW) / 2;
+    const y = (this.height - targetH) / 2 + s.offsetY;
+    ctx.drawImage(this.frameSource, x, y, targetW, targetH);
   }
 
-  private buildTextStyle(settings?: TextSettings): TextStyle {
-    const s = settings ?? {
-      content: '',
-      fontFamily: 'Inter',
-      fontSize: 72,
-      color: '#ffffff',
-      x: 0,
-      y: 0,
-      align: 'center' as const,
-    };
-    return new TextStyle({
-      fontFamily: [s.fontFamily, 'Apple Color Emoji', 'Segoe UI Emoji', 'sans-serif'],
-      fontSize: s.fontSize,
-      fill: new Color(s.color).toNumber(),
-      align: s.align,
-      fontWeight: '600',
-      whiteSpace: 'pre',
-      wordWrap: false,
-    });
+  private drawLogo(ctx: Ctx): void {
+    if (!this.logoSource) return;
+    const s = this.logoSettings;
+    ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity));
+    ctx.drawImage(this.logoSource, s.x, s.y, s.width, s.height);
+    ctx.globalAlpha = 1;
+  }
+
+  private drawText(ctx: Ctx): void {
+    if (!this.textCanvas) return;
+    ctx.drawImage(this.textCanvas, this.textPosition.x, this.textPosition.y);
   }
 }
 
-function isOffscreen(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
-): canvas is OffscreenCanvas {
+function sourceSize(source: FrameSource): { w: number; h: number } {
+  if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
+    return { w: source.displayWidth, h: source.displayHeight };
+  }
+  return { w: (source as ImageBitmap).width, h: (source as ImageBitmap).height };
+}
+
+function fitCover(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): { dx: number; dy: number; dw: number; dh: number } {
+  const scale = Math.max(dstW / srcW, dstH / srcH);
+  const dw = srcW * scale;
+  const dh = srcH * scale;
+  const dx = (dstW - dw) / 2;
+  const dy = (dstH - dh) / 2;
+  return { dx, dy, dw, dh };
+}
+
+function isOffscreen(canvas: AnyCanvas): canvas is OffscreenCanvas {
   return typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas;
 }
 
-async function loadBlobTexture(blob: Blob): Promise<Texture> {
-  if (blob.type === 'image/svg+xml') {
-    const bitmap = await rasterizeSvgBlob(blob);
-    return Texture.from(bitmap);
+function createCanvas(width: number, height: number): AnyCanvas {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
+  const c = document.createElement('canvas');
+  c.width = width;
+  c.height = height;
+  return c;
+}
+
+interface RenderedText {
+  canvas: AnyCanvas;
+  padding: number;
+  offsetX: number;
+}
+
+function renderTextCanvas(text: string, settings: TextSettings): RenderedText {
+  const fontFamily = `"${settings.fontFamily}", "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+  const fontSize = Math.max(1, settings.fontSize);
+  const font = `600 ${fontSize}px ${fontFamily}`;
+  const padding = Math.ceil(fontSize * 0.25);
+  const lineHeight = fontSize * 1.2;
+
+  const measureCanvas = createCanvas(1, 1);
+  const measureCtx = measureCanvas.getContext('2d') as Ctx | null;
+  if (!measureCtx) throw new Error('2D контекст недоступен');
+  measureCtx.font = font;
+
+  const lines = text.split('\n');
+  let maxWidth = 0;
+  for (const line of lines) {
+    const w = measureCtx.measureText(line || ' ').width;
+    if (w > maxWidth) maxWidth = w;
   }
-  const bitmap = await createImageBitmap(blob);
-  return Texture.from(bitmap);
+
+  const ascent = fontSize * 0.8;
+  const descent = fontSize * 0.25;
+  const textHeight = ascent + descent + (lines.length - 1) * lineHeight;
+
+  const canvasWidth = Math.max(1, Math.ceil(maxWidth) + padding * 2);
+  const canvasHeight = Math.max(1, Math.ceil(textHeight) + padding * 2);
+
+  const canvas = createCanvas(canvasWidth, canvasHeight);
+  const ctx = canvas.getContext('2d') as Ctx | null;
+  if (!ctx) throw new Error('2D контекст недоступен');
+  ctx.font = font;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = settings.color;
+  ctx.textAlign =
+    settings.align === 'center' ? 'center'
+    : settings.align === 'right' ? 'right'
+    : 'left';
+
+  const x =
+    settings.align === 'center' ? canvasWidth / 2
+    : settings.align === 'right' ? canvasWidth - padding
+    : padding;
+
+  for (let i = 0; i < lines.length; i++) {
+    const y = padding + ascent + i * lineHeight;
+    ctx.fillText(lines[i]!, x, y);
+  }
+
+  const offsetX =
+    settings.align === 'left' ? -padding
+    : settings.align === 'right' ? padding
+    : 0;
+
+  return { canvas, padding, offsetX };
+}
+
+async function loadLogoBitmap(blob: Blob): Promise<ImageBitmap> {
+  if (blob.type === 'image/svg+xml') {
+    return await rasterizeSvgBlob(blob);
+  }
+  return await createImageBitmap(blob);
 }
 
 async function rasterizeSvgBlob(blob: Blob): Promise<ImageBitmap> {
@@ -298,8 +312,8 @@ async function rasterizeSvgBlob(blob: Blob): Promise<ImageBitmap> {
   } catch {
     const text = await blob.text();
     const { width, height } = readSvgSize(text);
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d');
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d') as Ctx | null;
     if (!ctx) throw new Error('2D контекст недоступен');
     const img = await loadImageFromSvgText(text);
     ctx.drawImage(img, 0, 0, width, height);

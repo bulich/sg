@@ -191,7 +191,6 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
       canvas,
       width: OUTPUT_WIDTH,
       height: OUTPUT_HEIGHT,
-      antialias: false,
       softwareBackground: true,
     });
 

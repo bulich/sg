@@ -1,7 +1,4 @@
 /// <reference lib="webworker" />
-import { DOMAdapter, WebWorkerAdapter } from 'pixi.js';
-DOMAdapter.set(WebWorkerAdapter);
-
 import { renderVideo } from './pipeline';
 import type { EditorSettings } from '@/types/editor';
 

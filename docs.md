@@ -15,7 +15,7 @@ Offline-first PWA для превращения горизонтального F
 | Валидация | valibot | схема `EditorSettings`, импорт шаблонов |
 | Хранилище | Dexie 4 (IndexedDB) | проекты, шаблоны, логотипы |
 | Видео I/O | mediabunny | демукс/мукс MP4, WebCodecs-обёртка |
-| Композитор | PixiJS 8 | WebGL-рендер слоёв (blur, color, sprites, text) |
+| Композитор | Canvas 2D API (`OffscreenCanvas`) | `drawImage` + `ctx.filter` + `fillText` |
 | Drag/Resize | vue3-moveable | хэндлы над canvas'ом |
 | Сборка | Vite 6 + `vite-plugin-pwa` (Workbox) | precache, SW, manifest |
 | TS | TypeScript 5.7 (strict + `noUncheckedIndexedAccess`) | |
@@ -54,7 +54,7 @@ src/
 │
 ├── video/
 │   ├── pipeline.ts           # readInputMeta / extractThumbnail / renderVideo
-│   ├── scene.ts              # Scene (Pixi.Application + слои)
+│   ├── scene.ts              # Scene (Canvas 2D композитор)
 │   ├── validation.ts         # проверка входа (1920×1080, H.264, ≤60с)
 │   ├── worker.ts             # воркер-entrypoint (message API)
 │   └── workerClient.ts       # renderVideoInWorker() промис-обёртка
@@ -217,31 +217,29 @@ logos: 'id'                            // logo-blob'ы хранятся в IDB
 
 Прогресс считается от `wrapped.timestamp / duration`, FPS — от `performance.now()` с момента старта.
 
-**Почему `CanvasSink`, а не `VideoSampleSink`.** Pixi v8 под `WebWorkerAdapter` ненадёжно грузит текстуры из `VideoFrame` (битый `TextureSource` → `videoSprite` рендерился с невалидным scale и перекрывал сцену, настройки не применялись). `CanvasSink.canvases(0, duration)` выдаёт `{ canvas, timestamp, duration }` — `OffscreenCanvas` Pixi рендерит корректно. Бонусом `canvases(0, duration)` сам скипает pre-roll (edit list / negative CTS), так что timestamp'ы не требуют сдвига.
+**Почему `CanvasSink`, а не `VideoSampleSink`.** `CanvasSink.canvases(0, duration)` выдаёт готовые `{ canvas, timestamp, duration }` — `OffscreenCanvas` сразу пригоден для `ctx.drawImage` без промежуточного декода/копирования. Бонусом `canvases(0, duration)` сам скипает pre-roll (edit list / negative CTS), так что timestamp'ы не требуют сдвига.
 
 **A/V-синхронизация.** Никаких глобальных offset'ов: video пишется как `Math.max(0, wrapped.timestamp)`, audio — как есть. Аудио-пакеты с `timestamp < 0` (AAC priming / edit list pre-roll) дропаются до вызова `audioSource.add`, иначе муксер бросает `Timestamps must be non-negative`. Полностью соответствует поведению, когда оригинал имеет `videoFirstTs < 0` / `audioFirstTs < 0`.
 
-### `src/video/scene.ts` — Pixi-композитор
+### `src/video/scene.ts` — Canvas 2D композитор
 
-`Scene` — обёртка над `Pixi.Application`. Работает и с `HTMLCanvasElement`, и с `OffscreenCanvas` (одинаково).
+`Scene` — тонкая обёртка над 2D-контекстом. Работает и с `HTMLCanvasElement`, и с `OffscreenCanvas` (одинаково). Без WebGL, без внешних рендерных библиотек. Раньше использовался Pixi.js; заменён на нативный Canvas 2D из-за багов iOS Safari в воркере (`createPattern` ронял текст-пайп Pixi на мобильных; на десктопе тот же код работал).
 
-Слои (порядок = z-order):
-1. `bgSprite` — тот же фрейм-`Texture`, центрированный, cover 1080×1920, с двумя фильтрами:
-   - `BlurFilter({ strength: blurPx, quality: 4, kernelSize: 9 })`
-   - `ColorMatrixFilter` — `.brightness(b, false)` + `.saturate(s-1, true)` (умножение)
-2. `videoSprite` — тот же `Texture`, ширина = `OUTPUT_WIDTH * widthPercent / 100`, Y — центр + `offsetY`
-3. `logoSprite` — из текстуры логотипа, abs-координаты x/y, size/opacity
-4. `textSprite` (Pixi `Text`) — fontFamily + emoji-fallback (`Apple Color Emoji`, `Segoe UI Emoji`, `sans-serif`), fontWeight 600, align → anchorX (0 / 0.5 / 1)
+Слои (порядок = z-order), всё в одном `render()`:
+1. **Фон.** Если в `setBackgroundFrame` передан пре-рендеренный canvas (export-режим) — просто `drawImage` в cover-fit. Иначе (preview) — `ctx.filter = blur(Npx) brightness(B) saturate(S)` + `drawImage` текущего кадра в cover-fit с pad'ом `≥2·blurPx` (чтобы не было светлых краёв).
+2. **Main video.** `drawImage(frameSource, x, y, w, h)`, где `w = OUTPUT_WIDTH * widthPercent/100`, `h` пропорционален, Y — центр + `offsetY`.
+3. **Логотип.** `ctx.globalAlpha = opacity` + `drawImage(logoBitmap, x, y, width, height)`.
+4. **Текст.** Рендерится заранее в отдельный `OffscreenCanvas` (`renderTextCanvas`): `ctx.font = 600 <px> <family>, …emoji-fallback`, `fillText` построчно, с паддингом `~0.25·fontSize` на все стороны. На главный canvas — просто `drawImage` в позиции с коррекцией на паддинг/align.
 
-**API:** `init`, `setFrame(source)`, `setBackground`, `setMainVideo`, `setLogo(blob, settings)`, `updateLogoSettings`, `setText`, `render`, `extractBlob`, `destroy`.
+**API (не менялся):** `init`, `setFrame(source)`, `setBackgroundFrame(source)`, `setBackground`, `setMainVideo`, `setLogo(blob, settings)`, `updateLogoSettings`, `setText`, `render`, `extractBlob`, `destroy`.
 
-Важно: `setFrame` каждый кадр делает `this.frameTexture?.destroy(true)` + `Texture.from(source, true)` со `skipCache = true`. `skipCache` обязателен, потому что `CanvasSink` ротирует пул из двух `OffscreenCanvas`'ов — без него Pixi возвращал бы закэшированный, уже уничтоженный `TextureSource` по тому же canvas-ключу. Для 60-секундного ролика на ~30 fps это ~1800 текстур; если уткнёмся в память — заменить на `TextureSource.update()` с переиспользованием.
+`setFrame` просто сохраняет ссылку — никаких текстур, никаких аллокаций на кадр. `VideoFrame` / `ImageBitmap` / `OffscreenCanvas` одинаково пригодны для `drawImage`; размеры читаются через `sourceSize()` (различает `VideoFrame.displayWidth/Height` и `.width/.height` остальных).
 
-SVG-логотип растеризуется через `createImageBitmap(svgBlob)` с фолбэком на `OffscreenCanvas + drawImage`. **Pixi `Assets.load` не используется** — он тянет `HTMLImageElement` и падает в воркере.
+SVG-логотип растеризуется через `createImageBitmap(svgBlob)` с фолбэком на `OffscreenCanvas + drawImage`.
 
 ### `src/video/worker.ts` + `workerClient.ts`
 
-Воркер — ES-модуль (`worker: { format: 'es' }` в vite.config.ts), **первым делом** ставит `DOMAdapter.set(WebWorkerAdapter)` из pixi.js — иначе Pixi дергает `document.createElement('canvas')` и падает с `document is not defined`.
+Воркер — ES-модуль (`worker: { format: 'es' }` в vite.config.ts). Никаких DOM-адаптеров не нужно: `Scene` работает на чистом 2D-контексте `OffscreenCanvas`.
 
 Message API:
 
@@ -269,7 +267,7 @@ Message API:
 
 ### `useScene(canvasRef, frameBitmap, store)`
 - На mount создаёт `Scene`, подписывается на изменения `store.settings.*` и `store.logoBlob`, апдейтит сцену.
-- **Шрифты:** при смене `text.fontFamily/fontSize` ждёт `document.fonts.load('600 <px>px "<family>"')` и только потом вызывает `setText` + `render`. Без этого Pixi меряет текст фолбэком (`@fontsource` грузит woff2 лениво).
+- **Шрифты:** при смене `text.fontFamily/fontSize` ждёт `document.fonts.load('600 <px>px "<family>"')` и только потом вызывает `setText` + `render`. Без этого `ctx.measureText`/`fillText` меряет текст фолбэком (`@fontsource` грузит woff2 лениво).
 
 ### `usePreviewFrame(blobRef, timeRef)`
 - Держит `Input + CanvasSink` в замыкании, реактивно скрабит: при изменении времени или blob'a извлекает кадр и конвертит в `ImageBitmap`.
@@ -312,7 +310,7 @@ Scale = `canvas.clientWidth / OUTPUT_WIDTH` (через `ResizeObserver` + `resi
 
 `src/fonts/index.ts` импортирует `.css` из `@fontsource/*` (8 семейств × 2–3 веса → `@font-face`). Сами `.woff2` precache'атся Workbox'ом (см. `globPatterns` в vite.config).
 
-Pixi рендерит на canvas, поэтому для применения шрифта нужно **явно** дождаться `document.fonts.load()` — см. `useScene.ts`. В воркере свой `FontFaceSet` на `self.fonts`, и DOM-ные регистрации туда не попадают — **при экспорте текст может быть отрендерен фолбэком**, если шрифт не успел загрузиться. (Фикс — прокидывать `.woff2` URL через `?url` и регистрировать `new FontFace(...)` в воркере на старте.)
+Текст рендерится через `ctx.fillText`, поэтому для применения шрифта нужно **явно** дождаться `document.fonts.load()` — см. `useScene.ts`. В воркере свой `FontFaceSet` на `self.fonts`, и DOM-ные регистрации туда не попадают — **при экспорте текст может быть отрендерен фолбэком**, если шрифт не успел загрузиться. (Фикс — прокидывать `.woff2` URL через `?url` и регистрировать `new FontFace(...)` в воркере на старте.)
 
 ---
 
@@ -358,7 +356,7 @@ pnpm typecheck      # vue-tsc --noEmit
 
 `tsconfig.app.json`: `strict: true`, `noUncheckedIndexedAccess: true`, `lib: ['ES2023','DOM','DOM.Iterable','WebWorker']`. Алиас `@/` задан там же и в Vite.
 
-Ручные чанки (`rollupOptions.output.manualChunks`): `pixi`, `mediabunny` — вынесены отдельно, чтобы не блокировать первую отрисовку. Ворнинг "chunks larger than 500kB" ожидаемый (pixi ~570 кБ, mediabunny ~260 кБ).
+Ручные чанки (`rollupOptions.output.manualChunks`): только `mediabunny` (~260 кБ) — вынесен отдельно, чтобы не блокировать первую отрисовку. Pixi удалён из зависимостей, рендер-слой весит теперь ~0 кБ поверх браузерного Canvas 2D API.
 
 ---
 
@@ -395,10 +393,10 @@ pnpm typecheck      # vue-tsc --noEmit
         │  CanvasSink.getCanvas                                │  pointer ↔ store       │
         └─────────┬──────────┘                                 └───────────┬────────────┘
                   ▼                                                         ▼
-          ┌───────────────┐  watch(settings,logoBlob,frame)   ┌───────────────────────┐
-          │  useScene     │◀──────────────────────────────────│  InspectorTabs panels │
-          │   Scene (Pixi)│                                    └───────────────────────┘
-          └───────┬───────┘
+          ┌──────────────────┐  watch(settings,logoBlob,frame) ┌───────────────────────┐
+          │  useScene        │◀────────────────────────────────│  InspectorTabs panels │
+          │   Scene (2D ctx) │                                  └───────────────────────┘
+          └────────┬─────────┘
                   ▼
             HTML canvas (preview)
                   │
@@ -411,16 +409,16 @@ pnpm typecheck      # vue-tsc --noEmit
      postMessage({ type: 'render', ... })
                   ▼
        ┌───────────────────────────┐
-       │ worker.ts (WebWorkerAdapter)│
-       │  pipeline.renderVideo      │
-       │   mediabunny Input         │
-       │   buildStaticBackground @  │
-       │     backgroundTimeSec      │ ──▶ scene.setBackgroundFrame (один раз)
-       │   CanvasSink frames        │ ──▶ scene.setFrame / render (per-frame)
-       │   CanvasSource (AVC)       │
-       │   EncodedAudioPacketSource │
-       │   Mp4OutputFormat + Buffer │
-       └─────────────┬──────────────┘
+       │ worker.ts                 │
+       │  pipeline.renderVideo     │
+       │   mediabunny Input        │
+       │   buildStaticBackground @ │
+       │     backgroundTimeSec     │ ──▶ scene.setBackgroundFrame (один раз)
+       │   CanvasSink frames       │ ──▶ scene.setFrame / render (per-frame, 2D ctx)
+       │   CanvasSource (AVC)      │
+       │   EncodedAudioPacketSource│
+       │   Mp4OutputFormat + Buffer│
+       └─────────────┬─────────────┘
                      ▼
               Blob (video/mp4) → Download / Share
 ```
@@ -430,12 +428,11 @@ pnpm typecheck      # vue-tsc --noEmit
 ## 14. Что специально **не** сделано / ограничения
 
 - Нет FFmpeg.wasm, нет собственного MP4-муксера — всё через mediabunny.
-- Нет собственных WebGL-шейдеров; только Pixi-фильтры.
+- Нет WebGL/шейдеров — только `ctx.filter` (нативный gauss-blur + brightness/saturate на уровне браузера).
 - Нет multi-logo / multi-text / rotation — один логотип, один текстовый блок.
 - Нет i18n — только русский.
 - Нет auth/backend/аналитики/светлой темы.
 - Воркер-шрифты: не прегружаются; при экспорте кастомный шрифт может отрендериться фолбэком (см. §10).
-- `Texture.from` в `Scene.setFrame` аллоцирует новую текстуру на каждый кадр — может упереться в VRAM на длинных видео.
 - PNG/maskable/splash-иконки отсутствуют в `public/icons/` — нужно сгенерить из дизайна перед релизом.
 - Автотесты не написаны; верификация через `pnpm build` + `pnpm typecheck` + ручное прохождение golden path.
 
@@ -443,7 +440,7 @@ pnpm typecheck      # vue-tsc --noEmit
 
 ## 15. Точки расширения
 
-- **Новый фильтр фона** → дополнить `BackgroundSettings` + `Scene.setBackground` (для preview, GPU-фильтры) + `buildStaticBackground` в `pipeline.ts` (для export, CPU/Canvas-фильтры) + schema + `BackgroundPanel.vue`.
+- **Новый фильтр фона** → дополнить `BackgroundSettings` + `Scene.drawBackground` (для preview, через `ctx.filter`) + `buildStaticBackground` в `pipeline.ts` (для export) + schema + `BackgroundPanel.vue`.
 - **Новый шрифт** → добавить в `FONT_FAMILIES` (`constants.ts`), импортировать нужные веса в `fonts/index.ts`, при желании — прегрузить в воркере.
 - **Хранилище шаблонов в UI** → store/репозитории уже готовы (`templates`/`applyTemplate`), нужен только UI.
 - **Копирование видеотрека без перекодирования** (когда разрешение уже 1080×1920 и оверлеи не меняют пиксели) — заменить `CanvasSource` на `EncodedVideoPacketSource` + `EncodedPacketSink` по аналогии с аудио. Ускорит экспорт на порядок для «no-op» кейсов.
@@ -456,14 +453,12 @@ pnpm typecheck      # vue-tsc --noEmit
 |---|---|---|
 | `Failed to postMessage: could not be cloned` | Vue-Proxy в settings | `JSON.parse(JSON.stringify(settings))` перед postMessage (уже сделано) |
 | `DataCloneError: structuredClone ... could not be cloned` в editor-store | Vue reactive proxy → `structuredClone` | `cloneSettings` использует JSON round-trip (уже сделано) |
-| `document is not defined` в воркере | Pixi BrowserAdapter | `DOMAdapter.set(WebWorkerAdapter)` первой строкой (уже сделано) |
-| Шрифт не меняется в превью | `@fontsource` грузит woff2 лениво; Pixi мерит фолбэком | `document.fonts.load()` + повторный `setText+render` (уже в `useScene`) |
+| Шрифт не меняется в превью | `@fontsource` грузит woff2 лениво; `measureText` мерит фолбэком | `document.fonts.load()` + повторный `setText+render` (уже в `useScene`) |
 | Импорт падает с «Неподдерживаемый кодек» | mediabunny не распознал avc | проверить `videoTrack.codec` в `readInputMeta`; возможно HEVC/MOV вместо H.264 |
 | Нет звука в экспорте | Audio codec unknown/отсутствует | `audioTrack.codec` — null → трек не добавляется; копирование не применимо |
 | `Timestamps must be non-negative (got -Xs)` при экспорте | У входа отрицательные timestamp'ы (edit list / AAC priming) | Video пишется как `Math.max(0, ts)`; audio-пакеты с `ts < 0` дропаются до `audioSource.add` (уже сделано) |
 | Экспорт: первые N секунд — замершее чёрное изображение, настройки не применяются | Ошибочный глобальный offset сдвигал видео вперёд при `videoFirstTs < 0` | Не использовать offset: `CanvasSink.canvases(0, duration)` уже скипает pre-roll и начинает с `srcTs ≈ 0` (уже сделано) |
-| Экспорт: видно только исходное видео, без фона/лого/текста | `Texture.from(VideoFrame)` нестабилен под `WebWorkerAdapter` | Использовать `CanvasSink` вместо `VideoSampleSink` (уже сделано) |
-| Экспорт: повторный кадр на пулированных canvas'ах | `Texture.from` кэширует по источнику, `destroy(true)` ломает кэш | `Texture.from(source, true)` со `skipCache` (уже сделано) |
+| Экспорт на iOS падает с `TypeError` в `createPattern` при первом кадре | Pixi v8 text-pipe в воркере Safari зовёт `createPattern(Uint8Array, …)` из-за рассинхрона `Texture.WHITE` | Pixi убран; `Scene` на чистом Canvas 2D, текст через `fillText` на отдельный `OffscreenCanvas` (уже сделано) |
 | IndexedDB очистился на iOS | не запрошен persistent storage | убедиться, что `requestPersistentStorage()` вернул `true` после установки на Home Screen |
 | `NotFoundError: The object can not be found here` при чтении видео из IDB на iOS | iOS-баг: blob'ы крупного размера в IndexedDB протухают | Не хранить видео/миниатюру в IDB вообще. Держим в `projectsStore.videoCache` (Map в памяти); после reload пользователь переимпортирует видео (уже сделано, см. §4–5) |
 | Размытый фон выглядит «пиксельно» / низкого качества | Ранее каждый кадр рисовал downscale-blur при `softwareBackground: true` | Использовать статический фон: `buildStaticBackground` один раз с `ctx.filter = blur(Npx)` (нативный gauss), кадр выбирается слайдером превью (уже сделано, см. §7) |

@@ -51,7 +51,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          pixi: ['pixi.js'],
           mediabunny: ['mediabunny'],
         },
       },
