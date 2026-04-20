@@ -9,7 +9,7 @@ const BackgroundSchema = v.object({
 });
 
 const MainVideoSchema = v.object({
-  widthPercent: v.pipe(v.number(), v.minValue(50), v.maxValue(150)),
+  widthPercent: v.pipe(v.number(), v.minValue(1), v.maxValue(500)),
   offsetY: v.pipe(v.number(), v.minValue(-1000), v.maxValue(1000)),
 });
 

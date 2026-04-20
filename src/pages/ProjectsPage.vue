@@ -99,7 +99,14 @@ async function onFileSelected(event: Event) {
   <main class="page">
     <header class="header">
       <h1>Проекты</h1>
-      <router-link :to="{ name: 'logs' }" class="logs-link" aria-label="Логи">Логи</router-link>
+      <router-link :to="{ name: 'logs' }" class="logs-btn" aria-label="Логи">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16" />
+          <path d="M4 12h16" />
+          <path d="M4 18h10" />
+        </svg>
+        <span>Логи</span>
+      </router-link>
     </header>
 
     <section v-if="store.loading" class="state muted">Загрузка…</section>
@@ -179,10 +186,29 @@ async function onFileSelected(event: Event) {
   position: relative;
 }
 .header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
 }
 h1 {
   font-size: 28px;
+}
+.logs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.logs-btn:hover {
+  background: var(--bg-elev-2);
 }
 .state,
 .empty {

@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Project } from '@/types/editor';
-import { useProjectThumbnail } from '@/composables/useProjectThumbnail';
 
 const props = defineProps<{ project: Project }>();
 const emit = defineEmits<{
   open: [id: string];
   menu: [id: string];
 }>();
-
-const thumbnail = useProjectThumbnail(() => props.project);
 
 const dateLabel = computed(() => {
   const d = new Date(props.project.updatedAt);
@@ -23,8 +20,7 @@ const dateLabel = computed(() => {
 <template>
   <article class="card" @click="emit('open', project.id)">
     <div class="thumb">
-      <img v-if="thumbnail" :src="thumbnail" :alt="project.name" />
-      <div v-else class="empty">
+      <div class="empty">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="6" y="3" width="12" height="18" rx="2" />
           <circle cx="12" cy="15" r="3" />
@@ -57,11 +53,6 @@ const dateLabel = computed(() => {
   aspect-ratio: 9 / 16;
   background: var(--bg-elev-2);
   overflow: hidden;
-}
-.thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 .empty {
   display: flex;

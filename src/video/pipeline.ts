@@ -98,19 +98,162 @@ async function buildStaticBackground(
   ctx.clearRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
   const blurStrength = Math.max(0, bg.blurPx);
-  const supportsFilter = 'filter' in ctx;
-  if (blurStrength > 0 && supportsFilter) {
-    const filterCtx = ctx as unknown as { filter: string };
-    filterCtx.filter = `blur(${blurStrength}px)`;
-    const pad = Math.ceil(blurStrength * 2);
-    ctx.drawImage(wrapped.canvas, dx - pad, dy - pad, dw + pad * 2, dh + pad * 2);
-    filterCtx.filter = 'none';
+  if (blurStrength > 0) {
+    if (canvasFilterBlurWorks()) {
+      const filterCtx = ctx as unknown as { filter: string };
+      filterCtx.filter = `blur(${blurStrength}px)`;
+      const pad = Math.ceil(blurStrength * 2);
+      ctx.drawImage(wrapped.canvas, dx - pad, dy - pad, dw + pad * 2, dh + pad * 2);
+      filterCtx.filter = 'none';
+    } else {
+      drawSoftwareBlurred(ctx, wrapped.canvas, dx, dy, dw, dh, blurStrength);
+    }
   } else {
     ctx.drawImage(wrapped.canvas, dx, dy, dw, dh);
   }
 
   applyBrightnessSaturation(ctx, OUTPUT_WIDTH, OUTPUT_HEIGHT, bg.brightness, bg.saturation);
   return out;
+}
+
+let filterBlurSupport: boolean | null = null;
+function canvasFilterBlurWorks(): boolean {
+  if (filterBlurSupport !== null) return filterBlurSupport;
+  try {
+    const src = new OffscreenCanvas(16, 16);
+    const sctx = src.getContext('2d');
+    if (!sctx) { filterBlurSupport = false; return false; }
+    sctx.fillStyle = '#000';
+    sctx.fillRect(0, 0, 16, 16);
+    sctx.fillStyle = '#fff';
+    sctx.fillRect(7, 7, 2, 2);
+
+    const dst = new OffscreenCanvas(16, 16);
+    const dctx = dst.getContext('2d');
+    if (!dctx) { filterBlurSupport = false; return false; }
+    const fctx = dctx as unknown as { filter: string };
+    fctx.filter = 'blur(4px)';
+    dctx.drawImage(src, 0, 0);
+    fctx.filter = 'none';
+
+    const corner = dctx.getImageData(0, 0, 1, 1).data;
+    filterBlurSupport = (corner[0]! + corner[1]! + corner[2]!) > 0;
+  } catch {
+    filterBlurSupport = false;
+  }
+  console.log('[pipeline] canvas filter blur support:', filterBlurSupport);
+  return filterBlurSupport;
+}
+
+function drawSoftwareBlurred(
+  dstCtx: OffscreenCanvasRenderingContext2D,
+  source: CanvasImageSource,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  blurPx: number,
+): void {
+  const downscale = Math.max(2, Math.min(16, Math.round(blurPx / 2)));
+  const sw = Math.max(4, Math.round(dw / downscale));
+  const sh = Math.max(4, Math.round(dh / downscale));
+  const tmp = new OffscreenCanvas(sw, sh);
+  const tctx = tmp.getContext('2d');
+  if (!tctx) {
+    dstCtx.drawImage(source, dx, dy, dw, dh);
+    return;
+  }
+  tctx.imageSmoothingEnabled = true;
+  tctx.imageSmoothingQuality = 'high';
+  tctx.drawImage(source, 0, 0, sw, sh);
+
+  const radius = Math.max(1, Math.round(blurPx / downscale));
+  if (radius > 0) {
+    const img = tctx.getImageData(0, 0, sw, sh);
+    boxBlur(img.data, sw, sh, radius, 3);
+    tctx.putImageData(img, 0, 0);
+  }
+
+  dstCtx.imageSmoothingEnabled = true;
+  dstCtx.imageSmoothingQuality = 'high';
+  dstCtx.drawImage(tmp, dx, dy, dw, dh);
+}
+
+function boxBlur(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radius: number,
+  passes: number,
+): void {
+  const tmp = new Uint8ClampedArray(data.length);
+  for (let p = 0; p < passes; p++) {
+    boxBlurPass(data, tmp, w, h, radius, true);
+    boxBlurPass(tmp, data, w, h, radius, false);
+  }
+}
+
+function boxBlurPass(
+  src: Uint8ClampedArray,
+  dst: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radius: number,
+  horizontal: boolean,
+): void {
+  const n = radius * 2 + 1;
+  const inv = 1 / n;
+  if (horizontal) {
+    for (let y = 0; y < h; y++) {
+      const row = y * w * 4;
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let i = -radius; i <= radius; i++) {
+        const x = i < 0 ? 0 : i >= w ? w - 1 : i;
+        const off = row + x * 4;
+        r += src[off]!; g += src[off + 1]!; b += src[off + 2]!; a += src[off + 3]!;
+      }
+      for (let x = 0; x < w; x++) {
+        const off = row + x * 4;
+        dst[off] = r * inv;
+        dst[off + 1] = g * inv;
+        dst[off + 2] = b * inv;
+        dst[off + 3] = a * inv;
+        const xOut = x - radius < 0 ? 0 : x - radius;
+        const xIn = x + radius + 1 >= w ? w - 1 : x + radius + 1;
+        const oOut = row + xOut * 4;
+        const oIn = row + xIn * 4;
+        r += src[oIn]! - src[oOut]!;
+        g += src[oIn + 1]! - src[oOut + 1]!;
+        b += src[oIn + 2]! - src[oOut + 2]!;
+        a += src[oIn + 3]! - src[oOut + 3]!;
+      }
+    }
+  } else {
+    for (let x = 0; x < w; x++) {
+      const col = x * 4;
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let i = -radius; i <= radius; i++) {
+        const y = i < 0 ? 0 : i >= h ? h - 1 : i;
+        const off = y * w * 4 + col;
+        r += src[off]!; g += src[off + 1]!; b += src[off + 2]!; a += src[off + 3]!;
+      }
+      for (let y = 0; y < h; y++) {
+        const off = y * w * 4 + col;
+        dst[off] = r * inv;
+        dst[off + 1] = g * inv;
+        dst[off + 2] = b * inv;
+        dst[off + 3] = a * inv;
+        const yOut = y - radius < 0 ? 0 : y - radius;
+        const yIn = y + radius + 1 >= h ? h - 1 : y + radius + 1;
+        const oOut = yOut * w * 4 + col;
+        const oIn = yIn * w * 4 + col;
+        r += src[oIn]! - src[oOut]!;
+        g += src[oIn + 1]! - src[oOut + 1]!;
+        b += src[oIn + 2]! - src[oOut + 2]!;
+        a += src[oIn + 3]! - src[oOut + 3]!;
+      }
+    }
+  }
 }
 
 function applyBrightnessSaturation(

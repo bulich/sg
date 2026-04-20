@@ -83,22 +83,6 @@ async function onReplaceFile(event: Event) {
       <h1 class="title">{{ store.project?.name ?? '…' }}</h1>
       <button
         type="button"
-        class="replace"
-        :disabled="replacing"
-        aria-label="Заменить видео"
-        title="Заменить видео"
-        @click="pickReplacement"
-      >
-        <span v-if="replacing" class="spinner-sm" aria-hidden="true"></span>
-        <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 2v6h-6" />
-          <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-          <path d="M3 22v-6h6" />
-          <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-        </svg>
-      </button>
-      <button
-        type="button"
         class="export"
         :disabled="!store.videoBlob || replacing"
         @click="goExport"
@@ -196,22 +180,6 @@ async function onReplaceFile(event: Event) {
 }
 .export[disabled] {
   opacity: 0.4;
-}
-.replace {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text);
-}
-.replace:hover {
-  background: var(--bg-elev);
-}
-.replace[disabled] {
-  opacity: 0.5;
-  pointer-events: none;
 }
 .spinner-sm {
   width: 16px;

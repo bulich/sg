@@ -14,8 +14,8 @@ function reset() {
     <NumberSlider
       label="Ширина"
       :model-value="store.settings.mainVideo.widthPercent"
-      :min="50"
-      :max="150"
+      :min="1"
+      :max="500"
       :step="1"
       unit="%"
       @update:model-value="(v: number) => store.updateMainVideo({ widthPercent: v })"
