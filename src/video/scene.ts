@@ -1,4 +1,5 @@
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from '@/constants';
+import { renderBlurredBackground } from './bgBlur';
 import type {
   BackgroundSettings,
   LogoSettings,
@@ -31,6 +32,8 @@ export class Scene {
   private bgFrameSource: FrameSource | null = null;
   private logoSource: ImageBitmap | null = null;
   private textCanvas: AnyCanvas | null = null;
+  private cachedBlurCanvas: AnyCanvas | null = null;
+  private cachedBlurKey = '';
 
   private bgSettings: BackgroundSettings = { blurPx: 0, brightness: 1, saturation: 1 };
   private mainVideoSettings: MainVideoSettings = { widthPercent: 100, offsetY: 0 };
@@ -53,6 +56,10 @@ export class Scene {
   }
 
   setFrame(source: FrameSource | null): void {
+    if (source !== this.frameSource) {
+      this.cachedBlurCanvas = null;
+      this.cachedBlurKey = '';
+    }
     this.frameSource = source;
   }
 
@@ -61,6 +68,10 @@ export class Scene {
   }
 
   setBackground(settings: BackgroundSettings): void {
+    if (this.bgSettings.blurPx !== settings.blurPx) {
+      this.cachedBlurCanvas = null;
+      this.cachedBlurKey = '';
+    }
     this.bgSettings = settings;
   }
 
@@ -140,6 +151,8 @@ export class Scene {
     this.frameSource = null;
     this.bgFrameSource = null;
     this.textCanvas = null;
+    this.cachedBlurCanvas = null;
+    this.cachedBlurKey = '';
     this.ctx = null;
     this.canvas = null;
   }
@@ -158,24 +171,27 @@ export class Scene {
     if (this.softwareBackground || !this.frameSource) return;
 
     const bg = this.bgSettings;
-    const { w, h } = sourceSize(this.frameSource);
-    const fit = fitCover(w, h, this.width, this.height);
-
     const blur = Math.max(0, bg.blurPx);
+    const { w, h } = sourceSize(this.frameSource);
+
+    const key = `${w}x${h}|${blur}`;
+    if (!this.cachedBlurCanvas || this.cachedBlurKey !== key) {
+      this.cachedBlurCanvas = renderBlurredBackground(
+        this.frameSource as CanvasImageSource,
+        w,
+        h,
+        this.width,
+        this.height,
+        blur,
+      );
+      this.cachedBlurKey = key;
+    }
+
     const parts: string[] = [];
-    if (blur > 0) parts.push(`blur(${blur}px)`);
     if (bg.brightness !== 1) parts.push(`brightness(${bg.brightness})`);
     if (bg.saturation !== 1) parts.push(`saturate(${bg.saturation})`);
     ctx.filter = parts.length > 0 ? parts.join(' ') : 'none';
-
-    const pad = Math.ceil(blur * 2);
-    ctx.drawImage(
-      this.frameSource,
-      fit.dx - pad,
-      fit.dy - pad,
-      fit.dw + pad * 2,
-      fit.dh + pad * 2,
-    );
+    ctx.drawImage(this.cachedBlurCanvas, 0, 0);
     ctx.filter = 'none';
   }
 
