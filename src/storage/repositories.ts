@@ -84,14 +84,16 @@ async function bitmapSize(blob: Blob): Promise<{ width: number; height: number }
 function parseSvgLength(raw: string | null): number {
   if (!raw) return 0;
   const match = raw.trim().match(/^([\d.]+)\s*(px)?$/i);
-  return match ? parseFloat(match[1]) : 0;
+  return match && match[1] ? parseFloat(match[1]) : 0;
 }
 
 function parseViewBox(raw: string | null): { width: number; height: number } | null {
   if (!raw) return null;
   const parts = raw.trim().split(/[\s,]+/).map(Number);
-  if (parts.length !== 4 || !(parts[2] > 0) || !(parts[3] > 0)) return null;
-  return { width: parts[2], height: parts[3] };
+  const w = parts[2];
+  const h = parts[3];
+  if (parts.length !== 4 || w === undefined || h === undefined || !(w > 0) || !(h > 0)) return null;
+  return { width: w, height: h };
 }
 
 async function svgSize(blob: Blob): Promise<{ width: number; height: number }> {
