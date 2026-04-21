@@ -13,6 +13,7 @@ import {
 } from 'mediabunny';
 import { Scene } from './scene';
 import { renderBlurredBackground } from './bgBlur';
+import { ensureWorkerFont } from './workerFonts';
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from '@/constants';
 import type { EditorSettings, VideoMeta } from '@/types/editor';
 
@@ -191,6 +192,7 @@ export async function renderVideo(opts: RenderOptions): Promise<Blob> {
 
     scene.setBackground(opts.settings.background);
     scene.setMainVideo(opts.settings.mainVideo);
+    await ensureWorkerFont(opts.settings.text.fontFamily);
     scene.setText(opts.settings.text);
     console.log('[pipeline] scene.setLogo');
     await scene.setLogo(opts.logoBlob, opts.settings.logo);
