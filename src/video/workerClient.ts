@@ -38,6 +38,67 @@ export interface RenderCallParams {
 
 let counter = 0;
 
+function readSvgIntrinsicSize(svg: string): { width: number; height: number } {
+  const widthMatch = svg.match(/\swidth="(\d+(?:\.\d+)?)(?:px)?"/i);
+  const heightMatch = svg.match(/\sheight="(\d+(?:\.\d+)?)(?:px)?"/i);
+  const viewBox = svg.match(/viewBox="([\d.\s-]+)"/i);
+  let w = widthMatch?.[1] ? Number(widthMatch[1]) : 0;
+  let h = heightMatch?.[1] ? Number(heightMatch[1]) : 0;
+  if ((!w || !h) && viewBox?.[1]) {
+    const parts = viewBox[1].trim().split(/\s+/).map(Number);
+    if (parts.length === 4) {
+      const vw = parts[2] ?? 0;
+      const vh = parts[3] ?? 0;
+      if (!w) w = vw;
+      if (!h) h = vh;
+    }
+  }
+  return { width: w || 512, height: h || 512 };
+}
+
+async function rasterizeSvgToPng(svgBlob: Blob): Promise<Blob> {
+  const text = await svgBlob.text();
+  const { width, height } = readSvgIntrinsicSize(text);
+  const scale = 2;
+  const w = Math.max(1, Math.round(width * scale));
+  const h = Math.max(1, Math.round(height * scale));
+  const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image(width, height);
+    img.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Не удалось загрузить SVG для экспорта'));
+      img.src = url;
+    });
+    if (typeof img.decode === 'function') {
+      try { await img.decode(); } catch { /* noop */ }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D контекст недоступен');
+    ctx.drawImage(img, 0, 0, w, h);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Не удалось сериализовать логотип'))),
+        'image/png',
+      );
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function prepareLogoForWorker(blob: Blob): Promise<Blob> {
+  if (blob.type === 'image/svg+xml') {
+    console.log('[workerClient:logo] rasterizing SVG on main thread');
+    return await rasterizeSvgToPng(blob);
+  }
+  return blob;
+}
+
 async function detachBlob(blob: Blob, label: string): Promise<Blob> {
   console.log('[workerClient:detach] start', label, { size: blob.size, type: blob.type });
   try {
@@ -61,7 +122,8 @@ export async function renderVideoInWorker(params: RenderCallParams): Promise<Blo
   const w = getWorker();
   const id = `r_${Date.now()}_${++counter}`;
   const input = await detachBlob(params.input, 'input');
-  const logoBlob = params.logoBlob ? await detachBlob(params.logoBlob, 'logo') : null;
+  const preparedLogo = params.logoBlob ? await prepareLogoForWorker(params.logoBlob) : null;
+  const logoBlob = preparedLogo ? await detachBlob(preparedLogo, 'logo') : null;
   console.log('[workerClient:render] posting', id);
 
   return new Promise<Blob>((resolve, reject) => {

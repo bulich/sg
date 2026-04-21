@@ -2,10 +2,31 @@
 import { useEditorStore } from '@/stores/editor';
 import NumberSlider from '@/components/common/NumberSlider.vue';
 import SegmentedControl from '@/components/common/SegmentedControl.vue';
-import { FONT_FAMILIES } from '@/constants';
+import { FONT_FAMILIES, OUTPUT_WIDTH } from '@/constants';
 import type { FontFamily, TextAlign } from '@/types/editor';
 
 const store = useEditorStore();
+
+function measureTextWidth(): number {
+  const t = store.settings.text;
+  if (!t.content) return 0;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return 0;
+  ctx.font = `600 ${t.fontSize}px "${t.fontFamily}", "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+  const lines = t.content.split('\n');
+  return lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
+}
+
+function centerX() {
+  const width = measureTextWidth();
+  const align = store.settings.text.align;
+  let x: number;
+  if (align === 'center') x = OUTPUT_WIDTH / 2;
+  else if (align === 'right') x = (OUTPUT_WIDTH + width) / 2;
+  else x = (OUTPUT_WIDTH - width) / 2;
+  store.updateText({ x: Math.round(x) });
+}
 
 const alignOptions: { value: TextAlign; label: string }[] = [
   { value: 'left', label: 'Слева' },
@@ -25,6 +46,15 @@ const alignOptions: { value: TextAlign; label: string }[] = [
         @input="(e) => store.updateText({ content: (e.target as HTMLTextAreaElement).value })"
       />
     </label>
+
+    <button type="button" class="center-btn" @click="centerX">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 3v18" />
+        <path d="M6 8h12" />
+        <path d="M4 16h16" />
+      </svg>
+      <span>Центрировать по горизонтали</span>
+    </button>
 
     <label class="field">
       <span class="caption">Шрифт</span>
@@ -131,5 +161,21 @@ input[type='color'] {
   font-size: 13px;
   color: var(--text-muted);
   min-width: 70px;
+}
+.center-btn {
+  align-self: flex-start;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 4px 0 8px;
+}
+.center-btn:hover {
+  background: var(--bg-elev);
 }
 </style>

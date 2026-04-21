@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { useEditorStore } from '@/stores/editor';
 import NumberSlider from '@/components/common/NumberSlider.vue';
 import { toast } from '@/composables/useToast';
+import { OUTPUT_WIDTH } from '@/constants';
 
 const store = useEditorStore();
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -14,6 +15,11 @@ const preview = computed(() => {
 
 function openPicker() {
   fileInput.value?.click();
+}
+
+function centerX() {
+  const width = store.settings.logo.width;
+  store.updateLogo({ x: Math.round((OUTPUT_WIDTH - width) / 2) });
 }
 
 async function onFile(e: Event) {
@@ -60,6 +66,20 @@ async function onFile(e: Event) {
         @change="onFile"
       />
     </div>
+
+    <button
+      v-if="store.settings.logo.assetId"
+      type="button"
+      class="center-btn"
+      @click="centerX"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 3v18" />
+        <path d="M6 8h12" />
+        <path d="M4 16h16" />
+      </svg>
+      <span>Центрировать по горизонтали</span>
+    </button>
 
     <NumberSlider
       v-if="store.settings.logo.assetId"
@@ -166,5 +186,21 @@ async function onFile(e: Event) {
 .secondary {
   background: var(--bg-elev-2);
   color: var(--danger);
+}
+.center-btn {
+  align-self: flex-start;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+.center-btn:hover {
+  background: var(--bg-elev);
 }
 </style>
