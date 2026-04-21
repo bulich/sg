@@ -56,6 +56,12 @@ const hasText = computed(() => store.settings.text.content.length > 0);
 watch(hasLogo, (v) => {
   if (!v && selected.value === 'logo') selected.value = null;
 });
+watch(
+  () => store.locked,
+  (v) => {
+    if (v && selected.value === 'logo') selected.value = null;
+  },
+);
 watch(hasText, (v) => {
   if (!v && selected.value === 'text') selected.value = null;
 });
@@ -157,7 +163,7 @@ function onResize(e: OnResize) {
 }
 
 function selectLogo(ev: PointerEvent) {
-  if (!hasLogo.value) return;
+  if (!hasLogo.value || store.locked) return;
   ev.stopPropagation();
   selected.value = 'logo';
 }

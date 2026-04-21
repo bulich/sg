@@ -61,6 +61,7 @@ export interface Project {
   createdAt: number;
   updatedAt: number;
   settings: EditorSettings;
+  locked?: boolean;
 }
 
 export interface Template {

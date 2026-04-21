@@ -8,87 +8,87 @@ const emit = defineEmits<{
   menu: [id: string];
 }>();
 
-const dateLabel = computed(() => {
-  const d = new Date(props.project.updatedAt);
-  return d.toLocaleDateString('ru-RU', {
+function formatDate(ts: number) {
+  return new Date(ts).toLocaleDateString('ru-RU', {
     day: '2-digit',
     month: 'short',
+    year: 'numeric',
   });
-});
+}
+
+const updatedLabel = computed(() => formatDate(props.project.updatedAt));
+const createdLabel = computed(() => formatDate(props.project.createdAt));
 </script>
 
 <template>
-  <article class="card" @click="emit('open', project.id)">
-    <div class="thumb">
-      <div class="empty">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="6" y="3" width="12" height="18" rx="2" />
-          <circle cx="12" cy="15" r="3" />
-        </svg>
+  <li class="card" @click="emit('open', project.id)">
+    <div class="info">
+      <div class="name">{{ project.name }}</div>
+      <div class="meta">
+        <span class="meta-item created">Создан {{ createdLabel }}</span>
+        <span class="meta-sep" aria-hidden="true">·</span>
+        <span class="meta-item">Изменён {{ updatedLabel }}</span>
       </div>
     </div>
-    <footer class="meta">
-      <div class="name">{{ project.name }}</div>
-      <button type="button" class="more" aria-label="Меню" @click.stop="emit('menu', project.id)">⋯</button>
-    </footer>
-    <div class="date">{{ dateLabel }}</div>
-  </article>
+    <button type="button" class="more" aria-label="Меню" @click.stop="emit('menu', project.id)">⋯</button>
+  </li>
 </template>
 
 <style scoped>
 .card {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
   background: var(--bg-elev);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: transform 0.15s ease;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.card:hover {
+  background: var(--bg-elev-2);
 }
 .card:active {
-  transform: scale(0.98);
+  transform: scale(0.995);
 }
-.thumb {
-  position: relative;
-  aspect-ratio: 9 / 16;
-  background: var(--bg-elev-2);
-  overflow: hidden;
-}
-.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-dim);
-}
-.meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 10px 4px;
+.info {
+  flex: 1;
+  min-width: 0;
 }
 .name {
-  flex: 1;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.meta {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.meta-sep {
+  opacity: 0.6;
+}
+@media (max-width: 480px) {
+  .meta-item.created,
+  .meta-sep {
+    display: none;
+  }
+}
 .more {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   color: var(--text-muted);
   font-size: 18px;
   line-height: 1;
+  flex-shrink: 0;
 }
 .more:hover {
   background: var(--bg-elev-2);
-}
-.date {
-  padding: 0 10px 10px;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 </style>

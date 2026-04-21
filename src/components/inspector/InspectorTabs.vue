@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import BackgroundPanel from './BackgroundPanel.vue';
 import MainVideoPanel from './MainVideoPanel.vue';
 import LogoPanel from './LogoPanel.vue';
 import TextPanel from './TextPanel.vue';
+import { useEditorStore } from '@/stores/editor';
 
 type Tab = 'background' | 'video' | 'logo' | 'text';
-const active = ref<Tab>('background');
+const store = useEditorStore();
+const active = ref<Tab>('text');
 
-const tabs: { id: Tab; label: string }[] = [
+const allTabs: { id: Tab; label: string }[] = [
+  { id: 'text', label: 'Текст' },
   { id: 'background', label: 'Фон' },
   { id: 'video', label: 'Видео' },
   { id: 'logo', label: 'Лого' },
-  { id: 'text', label: 'Текст' },
 ];
+
+const tabs = computed(() => (store.locked ? allTabs.filter((t) => t.id === 'text') : allTabs));
+
+watch(
+  () => store.locked,
+  (v) => {
+    if (v) active.value = 'text';
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -29,6 +41,9 @@ const tabs: { id: Tab; label: string }[] = [
         :aria-selected="tab.id === active"
         @click="active = tab.id"
       >{{ tab.label }}</button>
+      <div class="actions">
+        <slot name="actions" />
+      </div>
     </nav>
     <section class="body">
       <BackgroundPanel v-if="active === 'background'" />
@@ -48,10 +63,18 @@ const tabs: { id: Tab; label: string }[] = [
 }
 .tabs {
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 8px 12px 4px;
   overflow-x: auto;
   scrollbar-width: none;
+}
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
 }
 .tabs::-webkit-scrollbar {
   display: none;
@@ -70,7 +93,7 @@ const tabs: { id: Tab; label: string }[] = [
   color: var(--text);
 }
 .body {
-  max-height: 260px;
+  height: 260px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }

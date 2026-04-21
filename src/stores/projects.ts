@@ -6,6 +6,7 @@ import {
   deleteProject,
   listProjects,
   renameProject,
+  setProjectLocked,
   touchProject,
 } from '@/storage/repositories';
 import { extractThumbnail, readInputMeta } from '@/video/pipeline';
@@ -44,6 +45,17 @@ export const useProjectsStore = defineStore('projects', () => {
     videoCache.delete(id);
     cacheVersion.value++;
     projects.value = projects.value.filter((p) => p.id !== id);
+  }
+
+  async function setLocked(id: string, locked: boolean) {
+    await setProjectLocked(id, locked);
+    const idx = projects.value.findIndex((p) => p.id === id);
+    if (idx !== -1) {
+      const existing = projects.value[idx];
+      if (existing) {
+        projects.value[idx] = { ...existing, locked };
+      }
+    }
   }
 
   async function rename(id: string, name: string) {
@@ -101,6 +113,7 @@ export const useProjectsStore = defineStore('projects', () => {
     create,
     remove,
     rename,
+    setLocked,
     replace,
     importVideo,
     getSessionVideo,

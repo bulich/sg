@@ -8,6 +8,7 @@ import { useScene } from '@/composables/useScene';
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from '@/constants';
 import InspectorTabs from '@/components/inspector/InspectorTabs.vue';
 import MoveableOverlay from '@/components/editor/MoveableOverlay.vue';
+import AppDrawer from '@/components/common/AppDrawer.vue';
 import { toast } from '@/composables/useToast';
 import { VideoValidationError } from '@/video/validation';
 
@@ -19,6 +20,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const replacing = ref(false);
 const notFound = ref(false);
+const menuOpen = ref(false);
 
 onMounted(async () => {
   const ok = await store.openProject(props.id);
@@ -81,12 +83,13 @@ async function onReplaceFile(event: Event) {
         </svg>
       </button>
       <h1 class="title">{{ store.project?.name ?? '…' }}</h1>
-      <button
-        type="button"
-        class="export"
-        :disabled="!store.videoBlob || replacing"
-        @click="goExport"
-      >Экспорт</button>
+      <button type="button" class="menu-btn" aria-label="Меню" @click="menuOpen = true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 6h16" />
+          <path d="M4 12h16" />
+          <path d="M4 18h16" />
+        </svg>
+      </button>
       <input
         ref="fileInput"
         type="file"
@@ -131,7 +134,18 @@ async function onReplaceFile(event: Event) {
       </div>
     </section>
 
-    <InspectorTabs class="inspector" />
+    <InspectorTabs class="inspector">
+      <template #actions>
+        <button
+          type="button"
+          class="export"
+          :disabled="!store.videoBlob || replacing"
+          @click="goExport"
+        >Экспорт</button>
+      </template>
+    </InspectorTabs>
+
+    <AppDrawer :open="menuOpen" @close="menuOpen = false" />
   </main>
 </template>
 
@@ -159,6 +173,19 @@ async function onReplaceFile(event: Event) {
   color: var(--text);
 }
 .back:hover {
+  background: var(--bg-elev);
+}
+.menu-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  background: transparent;
+}
+.menu-btn:hover {
   background: var(--bg-elev);
 }
 .title {

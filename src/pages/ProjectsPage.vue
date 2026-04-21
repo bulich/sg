@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useProjectsStore } from '@/stores/projects';
 import ProjectCard from '@/components/projects/ProjectCard.vue';
 import ActionSheet from '@/components/common/ActionSheet.vue';
+import AppDrawer from '@/components/common/AppDrawer.vue';
 import PromptDialog from '@/components/common/PromptDialog.vue';
 import { toast } from '@/composables/useToast';
 import { VideoValidationError } from '@/video/validation';
@@ -14,6 +15,7 @@ const store = useProjectsStore();
 const menuProjectId = ref<string | null>(null);
 const renameProjectId = ref<string | null>(null);
 const createOpen = ref(false);
+const menuOpen = ref(false);
 const importing = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 let pendingName = '';
@@ -51,6 +53,13 @@ async function confirmRename(name: string) {
     await store.rename(renameProjectId.value, name);
   }
   renameProjectId.value = null;
+}
+
+async function toggleLock() {
+  if (menuProject.value) {
+    await store.setLocked(menuProject.value.id, !menuProject.value.locked);
+  }
+  closeMenu();
 }
 
 async function confirmDelete() {
@@ -99,15 +108,16 @@ async function onFileSelected(event: Event) {
   <main class="page">
     <header class="header">
       <h1>Проекты</h1>
-      <router-link :to="{ name: 'logs' }" class="logs-btn" aria-label="Логи">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button type="button" class="menu-btn" aria-label="Меню" @click="menuOpen = true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M4 6h16" />
           <path d="M4 12h16" />
-          <path d="M4 18h10" />
+          <path d="M4 18h16" />
         </svg>
-        <span>Логи</span>
-      </router-link>
+      </button>
     </header>
+
+    <AppDrawer :open="menuOpen" @close="menuOpen = false" />
 
     <section v-if="store.loading" class="state muted">Загрузка…</section>
     <section v-else-if="store.projects.length === 0" class="empty">
@@ -121,14 +131,16 @@ async function onFileSelected(event: Event) {
       <p class="muted">Создайте первый проект, чтобы начать</p>
     </section>
 
-    <section v-else class="grid">
-      <ProjectCard
-        v-for="project in store.projects"
-        :key="project.id"
-        :project="project"
-        @open="openProject"
-        @menu="openMenu"
-      />
+    <section v-else class="list-wrap">
+      <ul class="list">
+        <ProjectCard
+          v-for="project in store.projects"
+          :key="project.id"
+          :project="project"
+          @open="openProject"
+          @menu="openMenu"
+        />
+      </ul>
     </section>
 
     <button
@@ -154,6 +166,9 @@ async function onFileSelected(event: Event) {
 
     <ActionSheet :open="menuProject !== null" :title="menuProject?.name" @close="closeMenu">
       <button class="sheet-btn" type="button" @click="startRename">Переименовать</button>
+      <button class="sheet-btn" type="button" @click="toggleLock">
+        {{ menuProject?.locked ? 'Разблокировать' : 'Заблокировать' }}
+      </button>
       <button class="sheet-btn danger" type="button" @click="confirmDelete">Удалить</button>
     </ActionSheet>
 
@@ -195,20 +210,18 @@ async function onFileSelected(event: Event) {
 h1 {
   font-size: 28px;
 }
-.logs-btn {
+.menu-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: var(--bg-elev);
+  justify-content: center;
   color: var(--text);
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
+  background: transparent;
 }
-.logs-btn:hover {
-  background: var(--bg-elev-2);
+.menu-btn:hover {
+  background: var(--bg-elev);
 }
 .state,
 .empty {
@@ -231,21 +244,16 @@ h1 {
 .muted {
   color: var(--text-muted);
 }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  padding: 12px 16px 120px;
+.list-wrap {
+  padding: 8px 12px 120px;
 }
-@media (min-width: 640px) {
-  .grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-@media (min-width: 960px) {
-  .grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 .fab {
   position: fixed;

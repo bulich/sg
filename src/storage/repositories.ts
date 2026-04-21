@@ -66,6 +66,10 @@ export async function setProjectSettings(
   await updateProject(id, { settings });
 }
 
+export async function setProjectLocked(id: string, locked: boolean): Promise<void> {
+  await db.projects.update(id, { locked });
+}
+
 export async function deleteProject(id: string): Promise<void> {
   await db.projects.delete(id);
 }
@@ -77,11 +81,42 @@ async function bitmapSize(blob: Blob): Promise<{ width: number; height: number }
   return size;
 }
 
+function parseSvgLength(raw: string | null): number {
+  if (!raw) return 0;
+  const match = raw.trim().match(/^([\d.]+)\s*(px)?$/i);
+  return match ? parseFloat(match[1]) : 0;
+}
+
+function parseViewBox(raw: string | null): { width: number; height: number } | null {
+  if (!raw) return null;
+  const parts = raw.trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || !(parts[2] > 0) || !(parts[3] > 0)) return null;
+  return { width: parts[2], height: parts[3] };
+}
+
+async function svgSize(blob: Blob): Promise<{ width: number; height: number }> {
+  const text = await blob.text();
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  const svg = doc.documentElement;
+  const viewBox = parseViewBox(svg.getAttribute('viewBox'));
+  let width = parseSvgLength(svg.getAttribute('width'));
+  let height = parseSvgLength(svg.getAttribute('height'));
+  if ((!width || !height) && viewBox) {
+    if (!width) width = viewBox.width;
+    if (!height) height = viewBox.height;
+  }
+  return { width, height };
+}
+
 export async function saveLogo(blob: Blob): Promise<LogoAsset> {
   const mimeType = blob.type || 'image/png';
   let width = 0;
   let height = 0;
-  if (mimeType !== 'image/svg+xml') {
+  if (mimeType === 'image/svg+xml') {
+    const size = await svgSize(blob);
+    width = size.width;
+    height = size.height;
+  } else {
     const size = await bitmapSize(blob);
     width = size.width;
     height = size.height;

@@ -30,6 +30,8 @@ export const useEditorStore = defineStore('editor', () => {
   const dirty = ref(false);
   const saving = ref(false);
 
+  const locked = computed(() => Boolean(project.value?.locked));
+
   const sessionVideo = computed(() => {
     void projectsStore.cacheVersion;
     const id = project.value?.id;
@@ -100,12 +102,12 @@ export const useEditorStore = defineStore('editor', () => {
   async function setLogoFromBlob(blob: Blob): Promise<void> {
     const asset = await saveLogo(blob);
     logoBlob.value = blob;
-    const aspect = asset.width && asset.height ? asset.width / asset.height : 1;
-    const size = Math.min(400, asset.width || 400);
+    const width = asset.width || asset.height || 400;
+    const height = asset.height || asset.width || width;
     updateLogo({
       assetId: asset.id,
-      width: size,
-      height: size / aspect,
+      width,
+      height,
     });
   }
 
@@ -123,6 +125,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   return {
     project,
+    locked,
     settings,
     logoBlob,
     previewTimeSec,
