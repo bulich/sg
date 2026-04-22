@@ -83,6 +83,21 @@ async function onReplaceFile(event: Event) {
         </svg>
       </button>
       <h1 class="title">{{ store.project?.name ?? '…' }}</h1>
+      <button
+        type="button"
+        class="menu-btn"
+        aria-label="Заменить видео"
+        :disabled="replacing"
+        @click="pickReplacement"
+      >
+        <span v-if="replacing" class="spinner-sm" aria-hidden="true"></span>
+        <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h13" />
+          <path d="M13 4l4 4-4 4" />
+          <path d="M20 16H7" />
+          <path d="M11 20l-4-4 4-4" />
+        </svg>
+      </button>
       <button type="button" class="menu-btn" aria-label="Меню" @click="menuOpen = true">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M4 6h16" />
@@ -212,8 +227,9 @@ async function onReplaceFile(event: Event) {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  opacity: 0.75;
   animation: spin 0.8s linear infinite;
 }
 .preview-wrap {
